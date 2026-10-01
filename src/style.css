@@ -72,10 +72,11 @@ button.primary:hover:not(:disabled) { background: #c4461a; }
   gap: 10px;
 }
 .floor h3 .fire-count { color: var(--fire); }
+.floor { max-width: 100%; overflow-x: auto; }
 .floor canvas {
   display: block;
   /* Width and height are set from JS so every floor shares one tile size. */
-  max-width: 100%;
+  touch-action: manipulation;
   border: 1px solid var(--border);
   border-radius: 4px;
   cursor: crosshair;
@@ -200,3 +201,30 @@ button.primary:hover:not(:disabled) { background: #c4461a; }
 .phase { font-size: 12px; color: var(--muted); font-weight: 500; margin-left: 8px; }
 
 .panel h2.sub { margin: 12px 0 6px; font-size: 11px; }
+
+.mobilebar { display: none; }
+@media (max-width: 899px) {
+  .layout { padding-bottom: calc(84px + env(safe-area-inset-bottom, 0px)); }
+  .mobilebar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 4;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px));
+    background: var(--panel);
+    border-top: 1px solid var(--border);
+  }
+  .m-info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .m-unit { font-weight: 600; }
+  .m-status { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .m-status.error { color: var(--bad); }
+  .mobilebar button { padding: 10px 14px; }
+  .topbar .turn { margin-left: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .banner { animation: none; }
+}
