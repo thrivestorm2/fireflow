@@ -43,7 +43,11 @@ export const exposureSystem: SimSystem = {
   },
 };
 
+/** Lets go of whoever or whatever the unit is holding. */
 export function releaseCarry(state: GameState, u: Unit): void {
+  const line = state.hoses.find((l) => l.id === u.line);
+  if (line) line.holder = undefined;
+  u.line = undefined;
   const other = state.units.find((o) => o.id === (u.carrying ?? u.carriedBy));
   if (other) {
     other.carrying = undefined;

@@ -2,6 +2,7 @@ import { buildState, type Scenario } from './building';
 import { exposureSystem } from './exposure';
 import { fireSystem } from './fire';
 import { forEachTile } from './grid';
+import { waterSystem } from './hoses';
 import { Rng } from './rng';
 import { smokeSystem } from './smoke';
 import { structureSystem } from './structure';
@@ -9,7 +10,7 @@ import type { SimContext, SimSystem } from './systems';
 import type { GameState, LogEntry } from './types';
 
 /** Environment systems, run in order at the start of every turn. */
-export const SYSTEMS: SimSystem[] = [fireSystem, smokeSystem, structureSystem, exposureSystem];
+export const SYSTEMS: SimSystem[] = [fireSystem, smokeSystem, structureSystem, exposureSystem, waterSystem];
 
 function runEnvironment(state: GameState, systems: SimSystem[] = SYSTEMS): void {
   const rng = new Rng(state.rngState);

@@ -96,9 +96,9 @@ export interface Unit {
   maxHp: number;
   ap: number;
   maxAp: number;
-  water: number;
-  maxWater: number;
   status: UnitStatus;
+  /** Firefighter: id of the hose line whose nozzle (or open end) they are holding. */
+  line?: string;
   /** Firefighter: the truck they came on. */
   truck?: string;
   /** Firefighter still riding their truck. Same id as `truck` while aboard. */
@@ -120,14 +120,37 @@ export interface Truck {
   /** Turn on which the truck reaches the scene. */
   arrivalTurn: number;
   status: TruckStatus;
-  /** Front tile of the truck, on the ground floor. Set once placed. */
+  /** Top-left tile of the truck, on the ground floor. Set once placed. */
   pos?: Pos;
   orientation: Orientation;
-  /** Water carried for crews to refill from. */
+  /** Water in the tank. Arrives full; only refills from a flowing hydrant. */
   water: number;
   maxWater: number;
-  /** Hooked up to a hydrant: unlimited water. */
-  hydrant: boolean;
+  /** Tiles of hose carried. Lines stretched from this truck use it up. */
+  hose: number;
+}
+
+export type HoseKind = 'attack' | 'supply';
+
+/** A hose stretched from a truck. `tiles` runs from the truck outwards; the last tile is the open end. */
+export interface HoseLine {
+  id: string;
+  truckId: string;
+  kind: HoseKind;
+  tiles: Pos[];
+  /** Firefighter holding the open end, if any. */
+  holder?: string;
+  /** Supply line coupled to this hydrant. */
+  hydrant?: Pos;
+}
+
+/** capped → (remove cap) → uncapped → (couple hose) → connected → (open) → opening → flowing */
+export type HydrantState = 'capped' | 'uncapped' | 'connected' | 'opening' | 'flowing';
+
+export interface Hydrant {
+  pos: Pos;
+  state: HydrantState;
+  lineId?: string;
 }
 
 export type GameStatus = 'playing' | 'won' | 'lost';
@@ -145,6 +168,10 @@ export interface GameState {
   floors: Tile[][][];
   units: Unit[];
   trucks: Truck[];
+  hoses: HoseLine[];
+  hydrants: Hydrant[];
+  /** Counter for hose line ids. */
+  nextLineId: number;
   turn: number;
   status: GameStatus;
   /** Seeded RNG state, so a game is fully reproducible from its seed and actions. */

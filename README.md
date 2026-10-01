@@ -50,27 +50,46 @@ extra AP to climb over (sofas, beds, tables).
 
 Trucks are a limited resource dispatched on a schedule. In the house scenario: Engine 1 on turn 1,
 Ladder 7 on turn 3, Engine 4 on turn 5. A truck that has arrived waits in staging until you **park**
-it: click *Park* and pick a road or driveway tile (R or right-click rotates it). It takes up 3 tiles.
-An **engine** parked within 2 tiles of a hydrant hooks up for unlimited water. Otherwise crews refill
-from its 24-unit tank.
+it: click *Park* and pick a road or driveway tile (R or right-click rotates it).
+
+| Truck | Size | Water tank | Hose | Crew |
+|---|---|---|---|---|
+| Engine | 2 × 5 tiles | 20 units | 28 tiles | engine crew (yellow), 4 AP |
+| Ladder | 2 × 7 tiles | — | — | ladder crew (orange), 5 AP, ground ladders |
 
 The crew starts aboard. Select a crew member and click a tile next to the truck to get them off. Units
 take up a tile each: they can pass through teammates but can't stop on an occupied tile. Movement and
 actions share the firefighter's AP for the turn.
 
-| Crew | AP | Equipment |
-|---|---|---|
-| Engine crew (yellow) | 4 | Hose with 6 shots of water; refill next to an engine |
-| Ladder crew (orange) | 5 | No hose; can raise ground ladders |
+## Water and hoses
+
+- **Water comes from the engine.** Each engine arrives with a full tank, and every spray uses one unit
+  from the engine feeding that line. Until the engine is supplied by a hydrant, the tank only goes down.
+- **Hose is limited.** A crew member next to an engine pulls off an **attack line** (up to 2 per engine)
+  or a **supply line** (1 per engine). The hose follows their exact path, one tile of hose per tile
+  walked, through doors, up stairs and up ladders. They can't go further than the hose left on that
+  engine. Walking back along the hose takes it back in. The hose can be put down and picked up by
+  someone else, or packed back onto the engine. A door with a hose through it can't be closed.
+- **Spraying needs the nozzle of an attack line** whose engine still has water.
+- **Hydrants take crew time.** Run a supply line to a hydrant, then work it from an adjacent tile:
+  1. **Remove cap**: 1 AP
+  2. **Couple supply hose**: 2 AP, using one more tile of hose
+  3. **Open hydrant**: 2 AP. Water reaches the engine during the next fire phase.
+
+  After that, the engine's tank refills by 8 units a turn, up to its capacity. The badge on a hydrant
+  shows how far the crew has got. A supply line with water flowing in it is drawn solid and animated.
 
 | Action | AP | Notes |
 |---|---|---|
 | Move | 1/tile | +1 over furniture, +1 through a window, +1 while carrying someone, +1 in thick smoke. Cannot enter a tile burning at intensity 2+. Stairs and ladders connect floors. |
-| Spray | 1 | Straight line, up to 3 tiles, unobstructed. −2 fire, −320 °C, leaves the tile wet (won't ignite) for 2 turns. |
+| Attack / supply line | 1 | Next to an engine with hose left. |
+| Put down / pick up hose | 0 / 1 | Pick up the loose end of a line from its tile. |
+| Pack hose | 1 | Next to the line's engine; the whole line goes back on the truck. |
+| Hydrant | 1 / 2 / 2 | Remove cap, couple, open — see above. |
+| Spray | 1 | Holding an attack line. Straight line, up to 3 tiles, unobstructed. −2 fire, −320 °C, leaves the tile wet for 2 turns. Uses 1 water from the engine. |
 | Door | 1 | Open or close an adjacent door or window. |
 | Axe | 1–2 | Breach an adjacent door, window or drywall wall (2 AP). Brick is too solid. |
-| Carry / Drop | 1 / 0 | Pick up an adjacent civilian. Carrying them to any outside tile rescues them. |
-| Refill | 1 | Next to an engine. |
+| Carry / Put down | 1 / 0 | Pick up an adjacent civilian (hands must be free of hose). Carrying them to any outside tile rescues them. |
 | Ladder | 2 | Ladder crew, standing outside directly below an upper-floor window. |
 
 You **win** when no fire remains. Civilians still inside then walk out. You **lose** if every
@@ -83,8 +102,9 @@ Select a firefighter (click, **Tab**, or click their truck) and click tiles. In 
 does the obvious thing: pick up an adjacent civilian, spray a burning tile in range, open an adjacent
 closed door, or walk to the tile by the shortest path (stairs and ladders included). Explicit modes:
 **1** Auto, **2** Move, **3** Spray, **4** Door, **5** Axe, **6** Carry. **Enter** ends the turn,
-**Z** undoes within the turn, **G** drops, **R** refills (or rotates a truck being parked), **L**
-raises a ladder, **H**/**V** toggle the heat/smoke overlays, **Esc** cancels. Hover a tile to inspect
+**Z** undoes within the turn, **A** / **S** take an attack / supply line, **N** picks up or puts
+down a hose, **B** packs a hose, **Y** works an adjacent hydrant, **G** puts a person down, **L**
+raises a ladder, **R** rotates a truck being parked, **H**/**V** toggle the heat/smoke overlays, **Esc** cancels. Hover a tile to inspect
 its material, contents, condition and temperature. Dashed orange borders mark tiles close to igniting.
 
 ## Architecture
@@ -94,7 +114,8 @@ src/core/       pure, deterministic game logic (no DOM)
   types.ts        Tile / Unit / Truck / GameState model — floors[floor][y][x]
   materials.ts    ignition point, fuel and damage per material; contents properties
   building.ts     floor-plan + contents parser, Scenario and dispatch definitions
-  trucks.ts       truck footprints, parking rules, hydrant hookup
+  trucks.ts       truck footprints and parking rules
+  hoses.ts        hose lines, hydrant states, and the water system (hydrant → engine refill)
   systems.ts      SimSystem interface — one step of the environment
   fire.ts smoke.ts structure.ts exposure.ts   the environment systems
   actions.ts      player actions: validation (actionCost) and application (performAction)
@@ -127,7 +148,7 @@ actions as the new hazard needs them.
 ## Ideas for next steps
 
 - More scenarios: apartment block, warehouse, basement fire; scenario select screen.
-- Hose lines tethered to an engine instead of personal tanks; fog/wide spray; aerial ladder from the truck.
+- Pump operator required at the engine; hose burning through in fire; fog/wide spray; aerial ladder from the truck.
 - More truck types (ambulance, rescue squad, battalion chief), and limited choice over what to dispatch.
 - Backdraft when a superheated closed room is opened; flashover when a room's average heat peaks.
 - Civilians who move on their own (panic, follow a firefighter); downed firefighters can be dragged out.

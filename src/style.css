@@ -197,3 +197,5 @@ button.primary:hover:not(:disabled) { background: #c4461a; }
   100% { opacity: 0; }
 }
 .phase { font-size: 12px; color: var(--muted); font-weight: 500; margin-left: 8px; }
+
+.panel h2.sub { margin: 12px 0 6px; font-size: 11px; }

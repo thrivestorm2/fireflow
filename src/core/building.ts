@@ -105,22 +105,22 @@ export interface Scenario {
   preburn: number;
 }
 
-export const CREW_STATS: Record<CrewRole, { ap: number; water: number }> = {
-  /** Hose crews carry water. */
-  engine: { ap: 4, water: 6 },
-  /** Search & rescue crews move faster and carry ladders, but no hose. */
-  ladder: { ap: 5, water: 0 },
+/** Engine crews work hoses and hydrants; ladder crews move faster and raise ladders. */
+export const CREW_AP: Record<CrewRole, number> = { engine: 4, ladder: 5 };
+
+/** What each truck type brings: size on the grid, water in the tank, tiles of hose. */
+export const TRUCK_SPECS: Record<TruckType, { length: number; width: number; water: number; hose: number }> = {
+  engine: { length: 5, width: 2, water: 20, hose: 28 },
+  ladder: { length: 7, width: 2, water: 0, hose: 0 },
 };
 
-export const TRUCK_WATER: Record<TruckType, number> = { engine: 24, ladder: 0 };
-
 export function createFirefighter(id: string, name: string, role: CrewRole, truck?: string, pos: Pos = { floor: 0, x: 0, y: 0 }): Unit {
-  const { ap, water } = CREW_STATS[role];
-  return { id, name, kind: 'firefighter', role, pos: { ...pos }, hp: 100, maxHp: 100, ap, maxAp: ap, water, maxWater: water, status: 'active', truck, aboard: truck };
+  const ap = CREW_AP[role];
+  return { id, name, kind: 'firefighter', role, pos: { ...pos }, hp: 100, maxHp: 100, ap, maxAp: ap, status: 'active', truck, aboard: truck };
 }
 
 export function createCivilian(id: string, name: string, pos: Pos): Unit {
-  return { id, name, kind: 'civilian', pos: { ...pos }, hp: 100, maxHp: 100, ap: 0, maxAp: 0, water: 0, maxWater: 0, status: 'active' };
+  return { id, name, kind: 'civilian', pos: { ...pos }, hp: 100, maxHp: 100, ap: 0, maxAp: 0, status: 'active' };
 }
 
 export function buildState(scenario: Scenario): GameState {
@@ -138,9 +138,9 @@ export function buildState(scenario: Scenario): GameState {
     arrivalTurn: d.arrivalTurn,
     status: 'enroute',
     orientation: 'h',
-    water: TRUCK_WATER[d.type],
-    maxWater: TRUCK_WATER[d.type],
-    hydrant: false,
+    water: TRUCK_SPECS[d.type].water,
+    maxWater: TRUCK_SPECS[d.type].water,
+    hose: TRUCK_SPECS[d.type].hose,
   }));
 
   let n = 0;
@@ -156,11 +156,22 @@ export function buildState(scenario: Scenario): GameState {
     floors,
     units,
     trucks,
+    hoses: [],
+    hydrants: [],
+    nextLineId: 1,
     turn: 1,
     status: 'playing',
     rngState: scenario.seed,
     log: [],
   };
+
+  floors.forEach((rows, floor) =>
+    rows.forEach((row, y) =>
+      row.forEach((t, x) => {
+        if (t.contents === 'hydrant') state.hydrants.push({ pos: { floor, x, y }, state: 'capped' });
+      }),
+    ),
+  );
 
   for (const { pos, intensity } of scenario.fires) {
     const t = floors[pos.floor][pos.y][pos.x];

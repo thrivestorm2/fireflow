@@ -1,10 +1,11 @@
 import { actionCost, performAction, type Action } from './core/actions';
 import { exposureDamage } from './core/exposure';
 import { endTurn, newGame, summarize } from './core/game';
-import { conditions, tileAt } from './core/grid';
+import { conditions, isAdjacent, tileAt } from './core/grid';
 import { CONTENTS, ignitionOf, MATERIALS } from './core/materials';
 import { reachable } from './core/pathing';
-import { placementError } from './core/trucks';
+import { HYDRANT_LABEL, HYDRANT_STEPS, hoseLeft, hydrantAt, linesThrough, supplyFor } from './core/hoses';
+import { placementError, truckTiles } from './core/trucks';
 import type { GameState, Orientation, Pos, Truck, Unit } from './core/types';
 import { houseFire } from './scenarios/house';
 import { MODES, planClick, type Mode } from './ui/intent';
@@ -166,13 +167,7 @@ function onTileClick(p: Pos): void {
 }
 
 function footprintHas(t: Truck, p: Pos): boolean {
-  if (!t.pos || p.floor !== 0) return false;
-  for (let i = 0; i < 3; i++) {
-    const x = t.orientation === 'h' ? t.pos.x + i : t.pos.x;
-    const y = t.orientation === 'v' ? t.pos.y + i : t.pos.y;
-    if (x === p.x && y === p.y) return true;
-  }
-  return false;
+  return p.floor === 0 && truckTiles(t).some((q) => q.x === p.x && q.y === p.y);
 }
 
 function setHintAndRender(text: string, error = false): void {
@@ -233,9 +228,34 @@ function setMode(m: Mode): void {
   setHintAndRender(MODES.find((x) => x.mode === m)!.hint);
 }
 
-function unitAction(type: 'drop' | 'refill' | 'ladder'): void {
+type UnitButton = 'drop' | 'attack' | 'supply' | 'nozzle' | 'pack' | 'hydrant' | 'ladder';
+
+/** The action behind each side-panel button, for the selected firefighter. */
+function buttonAction(kind: UnitButton, u: Unit): Action | undefined {
+  switch (kind) {
+    case 'drop':
+    case 'ladder':
+      return { type: kind, unitId: u.id };
+    case 'attack':
+    case 'supply':
+      return { type: 'takeLine', unitId: u.id, kind };
+    case 'nozzle':
+      return { type: u.line ? 'dropLine' : 'pickupLine', unitId: u.id };
+    case 'pack':
+      return { type: 'returnLine', unitId: u.id };
+    case 'hydrant': {
+      const h = state.hydrants.find((h) => isAdjacent(h.pos, u.pos));
+      return h && { type: 'hydrant', unitId: u.id, target: h.pos };
+    }
+  }
+}
+
+function unitAction(kind: UnitButton): void {
   const u = selected();
-  if (u) commit([{ type, unitId: u.id }]);
+  const a = u && buttonAction(kind, u);
+  if (!u) return setHintAndRender('Select a firefighter first.', true);
+  if (!a) return setHintAndRender('Stand next to a hydrant first.', true);
+  commit([a]);
 }
 
 // ---------------------------------------------------------------- panels
@@ -264,7 +284,8 @@ function crewCard(u: Unit): HTMLButtonElement {
   b.disabled = u.status !== 'active' || (!!truck && truck.status !== 'placed');
   const carrying = u.carrying ? state.units.find((c) => c.id === u.carrying)?.name : undefined;
   const where = u.aboard ? 'aboard' : u.pos.floor === 0 ? 'ground floor' : `floor ${u.pos.floor + 1}`;
-  const water = u.maxWater ? `💧 ${u.water}/${u.maxWater} · ` : '🪜 ';
+  const held = state.hoses.find((l) => l.id === u.line);
+  const water = held ? `${held.kind === 'attack' ? '🧯 attack line' : '🔵 supply line'} (${truckById(held.truckId)?.name}) · ` : u.role === 'ladder' ? '🪜 ' : '';
   b.innerHTML = `
     <span class="name"><span class="dot ${u.role}"></span> ${u.name}${u.status === 'down' ? ' — DOWN' : ''}</span>
     <span class="pips" title="Action points">${'●'.repeat(u.ap)}${'○'.repeat(Math.max(0, u.maxAp - u.ap))}</span>
@@ -293,7 +314,9 @@ function renderDispatch(): void {
     } else if (t.status === 'staged') {
       status = 'on scene — waiting to park';
     } else if (t.type === 'engine') {
-      status = t.hydrant ? 'parked · on hydrant ∞' : `parked · tank ${t.water}/${t.maxWater}`;
+      const supply = supplyFor(state, t);
+      const src = supply ? (supply.state === 'flowing' ? ' · hydrant ✓' : ' · hydrant ' + supply.state) : '';
+      status = `💧 ${t.water}/${t.maxWater} · hose ${hoseLeft(state, t)}/${t.hose}${src}`;
     } else {
       status = 'parked';
     }
@@ -346,10 +369,18 @@ function renderModes(): void {
     ov.append(b);
   }
   const sel = selected();
-  const can = (type: 'drop' | 'refill' | 'ladder') => !!sel && typeof actionCost(state, { type, unitId: sel.id }) === 'number';
-  ($('drop') as HTMLButtonElement).disabled = !can('drop');
-  ($('refill') as HTMLButtonElement).disabled = !can('refill');
-  ($('ladder') as HTMLButtonElement).disabled = !can('ladder');
+  for (const kind of ['drop', 'attack', 'supply', 'nozzle', 'pack', 'hydrant', 'ladder'] as UnitButton[]) {
+    const btn = $(kind) as HTMLButtonElement;
+    const a = sel && buttonAction(kind, sel);
+    const cost = a ? actionCost(state, a) : 'Select a firefighter';
+    btn.disabled = typeof cost !== 'number';
+    btn.title = `${btn.dataset.label}${typeof cost === 'number' ? ` — ${cost} AP` : ` — ${cost}`}`;
+    if (kind === 'nozzle') btn.textContent = sel?.line ? 'Put hose down' : 'Pick up hose';
+    if (kind === 'hydrant') {
+      const h = sel && state.hydrants.find((h) => isAdjacent(h.pos, sel.pos));
+      btn.textContent = h ? (HYDRANT_STEPS[h.state]?.label ?? 'Hydrant') : 'Hydrant';
+    }
+  }
   const h = $('hint');
   h.textContent = hint.text;
   h.className = 'hint' + (hint.error ? ' error' : '');
@@ -377,8 +408,24 @@ function renderInspector(): void {
       <dt>Temperature</dt><dd>${Math.round(t.temperature)}°C${Number.isFinite(ign) && t.fuel > 0 ? ` (ignites ~${ign}°C)` : ''}</dd>
       <dt>Smoke · fuel</dt><dd>${Math.round(t.smoke)}% · ${t.fuel.toFixed(1)}</dd>
       <dt>Integrity</dt><dd>${Math.max(0, Math.round(t.integrity))}%</dd>
+      ${hydrantInfo(hover)}
+      ${hoseInfo(hover)}
       ${people.length ? `<dt>People</dt><dd>${people.join(', ')}</dd>` : ''}
     </dl>`;
+}
+
+function hydrantInfo(p: Pos): string {
+  const h = hydrantAt(state, p);
+  if (!h) return '';
+  const next = HYDRANT_STEPS[h.state];
+  return `<dt>Hydrant</dt><dd>${HYDRANT_LABEL[h.state]}${next ? ` · next: ${next.label} (${next.ap} AP)` : ''}</dd>`;
+}
+
+function hoseInfo(p: Pos): string {
+  const lines = linesThrough(state, p);
+  if (!lines.length) return '';
+  const desc = lines.map((l) => `${l.kind} line from ${truckById(l.truckId)?.name}`).join(', ');
+  return `<dt>Hose</dt><dd>${desc}</dd>`;
 }
 
 function renderLog(): void {
@@ -431,7 +478,7 @@ function drawAll(time: number): void {
   const placingView = placing && {
     truck: truckById(placing.truckId)!,
     orientation: placing.orientation,
-    error: hover ? placementError(state, hover, placing.orientation) : 'no position',
+    error: hover ? placementError(state, truckById(placing.truckId)!, hover, placing.orientation) : 'no position',
   };
   canvases.forEach((c, f) => {
     drawFloor(c.getContext('2d')!, state, f, { selected: sel, hover, stops, mode, overlay, time, placing: placingView }, rects[f]);
@@ -469,9 +516,11 @@ function restart(): void {
 
 $('end-turn').addEventListener('click', doEndTurn);
 $('undo').addEventListener('click', undo);
-$('drop').addEventListener('click', () => unitAction('drop'));
-$('refill').addEventListener('click', () => unitAction('refill'));
-$('ladder').addEventListener('click', () => unitAction('ladder'));
+for (const kind of ['drop', 'attack', 'supply', 'nozzle', 'pack', 'hydrant', 'ladder'] as UnitButton[]) {
+  const btn = $(kind);
+  btn.dataset.label = btn.textContent ?? kind;
+  btn.addEventListener('click', () => unitAction(kind));
+}
 window.addEventListener('resize', layout);
 
 window.addEventListener('keydown', (e) => {
@@ -490,7 +539,17 @@ window.addEventListener('keydown', (e) => {
     case 'g':
       return unitAction('drop');
     case 'r':
-      return placing ? rotatePlacement() : unitAction('refill');
+      return rotatePlacement();
+    case 'a':
+      return unitAction('attack');
+    case 's':
+      return unitAction('supply');
+    case 'n':
+      return unitAction('nozzle');
+    case 'b':
+      return unitAction('pack');
+    case 'y':
+      return unitAction('hydrant');
     case 'l':
       return unitAction('ladder');
     case 'h':

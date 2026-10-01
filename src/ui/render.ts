@@ -1,7 +1,8 @@
 import { canSprayFrom } from '../core/actions';
 import { AMBIENT, ignitionOf } from '../core/materials';
-import { footprint, hydrantNear, truckTiles } from '../core/trucks';
-import type { GameState, Orientation, Pos, Tile, Truck, Unit } from '../core/types';
+import { hydrantAt } from '../core/hoses';
+import { footprint, truckTiles } from '../core/trucks';
+import type { GameState, HoseLine, Orientation, Pos, Tile, Truck, Unit } from '../core/types';
 
 /** Internal pixel size of a tile; canvases are scaled with CSS. */
 export const TILE = 32;
@@ -478,6 +479,16 @@ function drawTruckShape(g: CanvasRenderingContext2D, truck: Truck, tiles: Pos[],
   g.textAlign = 'center';
   const label = truck.name.replace(/^(\w)\w*\s*/, '$1');
   g.fillText(label, x + w / 2 + (horizontal ? S / 2 : 0), y + h / 2 + (horizontal ? -8 : S / 2));
+  if (truck.maxWater > 0) {
+    // Tank gauge along the far edge of the truck.
+    const frac = truck.water / truck.maxWater;
+    g.fillStyle = 'rgba(0,0,0,0.5)';
+    if (horizontal) g.fillRect(x + S, y + h - 6, w - S - 4, 4);
+    else g.fillRect(x + w - 6, y + S, 4, h - S - 4);
+    g.fillStyle = frac > 0.3 ? '#64b5f6' : '#ef5350';
+    if (horizontal) g.fillRect(x + S, y + h - 6, (w - S - 4) * frac, 4);
+    else g.fillRect(x + w - 6, y + S, 4, (h - S - 4) * frac);
+  }
   for (let i = 0; i < crewAboard; i++) {
     g.fillStyle = HELMET[truck.type];
     g.beginPath();
@@ -499,6 +510,7 @@ export function drawFloor(g: CanvasRenderingContext2D, state: GameState, floor: 
       const t = state.floors[floor][y][x];
       drawBase(g, t, px(x), py(y), x, y);
       if (t.contents !== 'tree') drawContents(g, t, px(x), py(y));
+      if (t.contents === 'hydrant') drawHydrantState(g, state, { floor, x, y }, px(x), py(y), view.time);
       // Centre line between two lanes of road.
       if (t.material === 'asphalt' && state.floors[floor][y + 1]?.[x]?.material === 'asphalt' && state.floors[floor][y - 1]?.[x]?.material !== 'asphalt') {
         g.fillStyle = '#e8c547';
@@ -531,23 +543,12 @@ export function drawFloor(g: CanvasRenderingContext2D, state: GameState, floor: 
     for (const truck of state.trucks) {
       const tiles = truckTiles(truck);
       if (!tiles.length) continue;
-      const hydrant = truck.hydrant && hydrantNear(state, tiles);
-      if (hydrant) {
-        const a = tiles[1];
-        g.strokeStyle = '#64b5f6';
-        g.lineWidth = 3;
-        g.setLineDash([6, 4]);
-        g.beginPath();
-        g.moveTo(px(a.x) + S / 2, py(a.y) + S / 2);
-        g.lineTo(px(hydrant.x) + S / 2, py(hydrant.y) + S / 2);
-        g.stroke();
-        g.setLineDash([]);
-        g.lineWidth = 1;
-      }
       const aboard = state.units.filter((u) => u.aboard === truck.id && u.status === 'active').length;
       drawTruckShape(g, truck, tiles, rect, 1, aboard);
     }
   }
+
+  drawHoses(g, state, floor, rect, view.time);
 
   const sel = view.selected;
   if (sel && sel.status === 'active' && !view.placing) {
@@ -561,7 +562,8 @@ export function drawFloor(g: CanvasRenderingContext2D, state: GameState, floor: 
         g.strokeRect(px(x) + 0.5, py(y) + 0.5, S - 1, S - 1);
       }
     }
-    if ((view.mode === 'spray' || view.mode === 'auto') && !sel.aboard && sel.pos.floor === floor && sel.water > 0) {
+    const nozzle = state.hoses.find((l) => l.id === sel.line && l.kind === 'attack');
+    if ((view.mode === 'spray' || view.mode === 'auto') && nozzle && sel.pos.floor === floor) {
       for (let y = rect.y0; y < rect.y0 + rect.rows; y++) {
         for (let x = rect.x0; x < rect.x0 + rect.cols; x++) {
           const t = state.floors[floor][y][x];
@@ -584,7 +586,7 @@ export function drawFloor(g: CanvasRenderingContext2D, state: GameState, floor: 
   }
 
   if (view.placing && view.hover && floor === 0) {
-    const tiles = footprint(view.hover, view.placing.orientation).filter(inView);
+    const tiles = footprint(view.hover, view.placing.orientation, view.placing.truck.type).filter(inView);
     if (tiles.length) {
       drawTruckShape(g, view.placing.truck, tiles, rect, 0.6, 0);
       g.strokeStyle = view.placing.error ? '#ef5350' : '#66bb6a';
@@ -600,3 +602,103 @@ export function drawFloor(g: CanvasRenderingContext2D, state: GameState, floor: 
   }
 }
 
+
+const HOSE_COLOR = { attack: '#ffd54f', supply: '#42a5f5' } as const;
+
+/** Hose lines: yellow attack lines, blue supply lines. Dashed when no water is behind them. */
+function drawHoses(g: CanvasRenderingContext2D, state: GameState, floor: number, rect: ViewRect, time: number): void {
+  const S = TILE;
+  const cx = (p: Pos) => (p.x - rect.x0) * S + S / 2;
+  const cy = (p: Pos) => (p.y - rect.y0) * S + S / 2;
+  state.hoses.forEach((line, i) => {
+    const truck = state.trucks.find((t) => t.id === line.truckId);
+    if (!truck) return;
+    const off = ((i % 3) - 1) * 4;
+    const pts: (Pos | null)[] = [];
+    // Start at the truck tile nearest the first hose tile.
+    const first = line.tiles[0];
+    const start = truckTiles(truck).sort((a, b) => Math.abs(a.x - first.x) + Math.abs(a.y - first.y) - (Math.abs(b.x - first.x) + Math.abs(b.y - first.y)))[0];
+    if (start && first.floor === floor && floor === 0) pts.push(start);
+    for (const p of line.tiles) pts.push(p.floor === floor ? p : null);
+    const charged = line.kind === 'supply' ? isSupplyCharged(state, line) : truck.water > 0;
+    g.strokeStyle = HOSE_COLOR[line.kind];
+    g.lineWidth = line.kind === 'supply' ? 6 : charged ? 5 : 3;
+    g.lineCap = 'round';
+    g.lineJoin = 'round';
+    if (!charged) g.setLineDash([7, 5]);
+    g.beginPath();
+    let pen = false;
+    for (const p of pts) {
+      if (!p) {
+        pen = false;
+        continue;
+      }
+      if (pen) g.lineTo(cx(p) + off, cy(p) + off);
+      else g.moveTo(cx(p) + off, cy(p) + off);
+      pen = true;
+    }
+    g.stroke();
+    g.setLineDash([]);
+    if (line.kind === 'supply' && charged) {
+      // Water moving along the supply line.
+      g.strokeStyle = 'rgba(255,255,255,0.55)';
+      g.lineWidth = 2;
+      g.setLineDash([3, 9]);
+      g.lineDashOffset = time / 60;
+      g.stroke();
+      g.setLineDash([]);
+      g.lineDashOffset = 0;
+    }
+    g.lineWidth = 1;
+    g.lineCap = 'butt';
+    const end = line.tiles[line.tiles.length - 1];
+    if (line.kind === 'attack' && end.floor === floor) {
+      g.fillStyle = '#9e9e9e';
+      g.strokeStyle = '#212121';
+      g.beginPath();
+      g.arc(cx(end) + off, cy(end) + off, 4, 0, Math.PI * 2);
+      g.fill();
+      g.stroke();
+      if (!line.holder) {
+        g.strokeStyle = HOSE_COLOR.attack;
+        g.beginPath();
+        g.arc(cx(end) + off, cy(end) + off, 8, 0, Math.PI * 2);
+        g.stroke();
+      }
+    } else if (line.kind === 'supply' && !line.hydrant && !line.holder && end.floor === floor) {
+      g.strokeStyle = HOSE_COLOR.supply;
+      g.beginPath();
+      g.arc(cx(end) + off, cy(end) + off, 8, 0, Math.PI * 2);
+      g.stroke();
+    }
+  });
+}
+
+function isSupplyCharged(state: GameState, line: HoseLine): boolean {
+  return !!line.hydrant && hydrantAt(state, line.hydrant)?.state === 'flowing';
+}
+
+/** Small badge on a hydrant showing how far the crew has got with it. */
+function drawHydrantState(g: CanvasRenderingContext2D, state: GameState, p: Pos, px: number, py: number, time: number): void {
+  const h = hydrantAt(state, p);
+  if (!h || h.state === 'capped') return;
+  const S = TILE;
+  g.fillStyle = '#212121';
+  g.beginPath();
+  g.arc(px + S - 7, py + 7, 5, 0, Math.PI * 2);
+  g.fill();
+  if (h.state === 'opening' || h.state === 'flowing') {
+    const pulse = h.state === 'flowing' ? 0.6 + 0.4 * Math.sin(time / 200) : 0.5;
+    g.fillStyle = `rgba(100,181,246,${pulse})`;
+    g.beginPath();
+    g.arc(px + S - 7, py + 7, 4, 0, Math.PI * 2);
+    g.fill();
+  } else if (h.state === 'connected') {
+    g.strokeStyle = '#64b5f6';
+    g.lineWidth = 2;
+    g.beginPath();
+    g.arc(px + S - 7, py + 7, 4, 0, Math.PI * 2);
+    g.stroke();
+    g.lineWidth = 1;
+  }
+}

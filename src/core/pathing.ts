@@ -1,4 +1,5 @@
-import { blockers, moveOrigins, stepCost, stepNeighbors } from './actions';
+import { blockers, lineOf, moveOrigins, stepCost, stepNeighbors } from './actions';
+import { hoseLeft } from './hoses';
 import { posKey } from './grid';
 import type { GameState, Pos, Unit } from './types';
 
@@ -13,28 +14,34 @@ export interface Reach {
 /**
  * Dijkstra over walkable tiles, stairwells and ladders, limited to the unit's
  * remaining AP. Crew still on a truck start from any tile of the truck.
- * Units can pass through teammates but not stop on them.
+ * Units can pass through teammates but not stop on them. Someone holding a
+ * hose can only go as far as the hose left on its engine (walking back along
+ * their own hose is free).
  */
 export function reachable(state: GameState, unit: Unit, budget = unit.ap): Reach {
   const block = blockers(state);
   const origins = moveOrigins(state, unit);
   const cost = new Map<string, number>(origins.map((o) => [posKey(o), 0]));
   const prev = new Map<string, Pos>();
-  const open = origins.map((p) => ({ p, c: 0 }));
+  const open = origins.map((p) => ({ p, c: 0, hose: 0 }));
   const carrying = !!unit.carrying;
+  const line = lineOf(state, unit);
+  const hoseBudget = line ? hoseLeft(state, state.trucks.find((t) => t.id === line.truckId)!) : Infinity;
+  const onOwnHose = new Set(line?.tiles.map(posKey));
 
   while (open.length) {
     open.sort((a, b) => a.c - b.c);
-    const { p, c } = open.shift()!;
+    const { p, c, hose } = open.shift()!;
     if (c > (cost.get(posKey(p)) ?? Infinity)) continue;
     for (const n of stepNeighbors(state, p)) {
       const step = stepCost(state, p, n, carrying, block);
       if (typeof step === 'string') continue;
       const nc = c + step;
-      if (nc > budget || nc >= (cost.get(posKey(n)) ?? Infinity)) continue;
+      const nh = hose + (onOwnHose.has(posKey(n)) ? 0 : 1);
+      if (nc > budget || nh > hoseBudget || nc >= (cost.get(posKey(n)) ?? Infinity)) continue;
       cost.set(posKey(n), nc);
       prev.set(posKey(n), p);
-      open.push({ p: n, c: nc });
+      open.push({ p: n, c: nc, hose: nh });
     }
   }
 

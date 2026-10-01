@@ -92,6 +92,9 @@ function dropUnits(state: GameState, p: Pos, log: SimContext['log']): void {
     }
     u.pos = landing;
     u.hp -= STRUCTURE.fallDamage;
+    const line = state.hoses.find((l) => l.id === u.line);
+    if (line) line.holder = undefined; // the hose stays where it was laid
+    u.line = undefined;
     const carried = u.carrying && state.units.find((c) => c.id === u.carrying);
     if (carried) {
       carried.pos = { ...landing };

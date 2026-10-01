@@ -11,7 +11,8 @@ describe('game flow', () => {
     expect(s.floors).toHaveLength(2);
     expect(s.trucks.map((t) => t.status)).toEqual(['staged', 'enroute', 'enroute']);
     expect(s.units.filter((u) => u.kind === 'firefighter').every((u) => u.aboard)).toBe(true);
-    expect(s.floors[0].flat().filter((t) => t.contents === 'hydrant')).toHaveLength(2);
+    expect(s.hydrants).toHaveLength(2);
+    expect(s.hydrants.every((h) => h.state === 'capped')).toBe(true);
     expect(s.floors[0].flat().some((t) => t.drivable)).toBe(true);
     expect(summarize(s).burning).toBeGreaterThan(0);
   });
@@ -39,6 +40,8 @@ describe('game flow', () => {
       }),
     );
     s = standAt(s, 'ff1', 2, 1);
+    s.hoses.push({ id: 'line1', truckId: 'truck1', kind: 'attack', tiles: [{ floor: 0, x: 2, y: 1 }], holder: 'ff1' });
+    s.units[0].line = 'line1';
     const r = performAction(s, { type: 'spray', unitId: 'ff1', target: { floor: 0, x: 3, y: 1 } });
     expect(r.state.status).toBe('won');
   });

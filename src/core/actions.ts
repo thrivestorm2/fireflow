@@ -1,18 +1,23 @@
 import { floorName } from './fire';
 import { evaluate } from './game';
 import { DIRS, isAdjacent, isOpenAir, isOutside, isWalkable, neighbors, posKey, samePos, tileAt } from './grid';
+import { extendLine, HOSE, hoseLeft, HYDRANT_STEPS, hydrantAt, linesThrough } from './hoses';
 import { CONTENTS } from './materials';
-import { enginesNear, hydrantNear, placementError, truckOccupancy, truckTiles } from './trucks';
-import type { GameState, LogEntry, Orientation, Pos, Truck, Unit } from './types';
+import { besideTruck, enginesNear, placementError, truckOccupancy, truckTiles } from './trucks';
+import type { GameState, HoseKind, HoseLine, LogEntry, Orientation, Pos, Truck, Unit } from './types';
 
 export type Action =
   | { type: 'move'; unitId: string; path: Pos[] } // walk a path; may start from the unit's truck
-  | { type: 'spray'; unitId: string; target: Pos }
+  | { type: 'spray'; unitId: string; target: Pos } // needs the nozzle of a charged attack line
   | { type: 'toggle'; unitId: string; target: Pos } // open/close a door or window
   | { type: 'breach'; unitId: string; target: Pos } // axe through a drywall wall, door or window
   | { type: 'pickup'; unitId: string; target: Pos }
   | { type: 'drop'; unitId: string }
-  | { type: 'refill'; unitId: string }
+  | { type: 'takeLine'; unitId: string; kind: HoseKind } // pull a hose off an adjacent engine
+  | { type: 'dropLine'; unitId: string } // put the nozzle/hose end down where you stand
+  | { type: 'pickupLine'; unitId: string } // pick up a hose end lying on your tile
+  | { type: 'returnLine'; unitId: string } // pack the line you hold back onto its engine
+  | { type: 'hydrant'; unitId: string; target: Pos } // next step of working a hydrant
   | { type: 'ladder'; unitId: string } // raise a ground ladder to the window above
   | { type: 'placeTruck'; truckId: string; pos: Pos; orientation: Orientation };
 
@@ -29,11 +34,15 @@ export const COST = {
   breachWindow: 1,
   pickup: 1,
   drop: 0,
-  refill: 1,
+  takeLine: 1,
+  dropLine: 0,
+  pickupLine: 1,
+  returnLine: 1,
   ladder: 2,
 } as const;
 
-export const SPRAY = { range: 3, knockdown: 2, cooling: 320, splashCooling: 80, wetTurns: 2 } as const;
+/** Each spray uses one unit of water from the engine feeding the line. */
+export const SPRAY = { range: 3, knockdown: 2, cooling: 320, splashCooling: 80, wetTurns: 2, water: 1 } as const;
 export const THICK_SMOKE = 60;
 
 /** Precomputed blockers, so pathfinding doesn't rebuild them per step. */
@@ -128,6 +137,10 @@ function findUnit(state: GameState, id: string): Unit | undefined {
   return state.units.find((u) => u.id === id);
 }
 
+export function lineOf(state: GameState, u: Unit): HoseLine | undefined {
+  return u.line ? state.hoses.find((l) => l.id === u.line) : undefined;
+}
+
 function civilianAt(state: GameState, p: Pos): Unit | undefined {
   return state.units.find((u) => u.kind === 'civilian' && u.status === 'active' && !u.carriedBy && samePos(u.pos, p));
 }
@@ -149,6 +162,12 @@ export function pathCost(state: GameState, u: Unit, path: Pos[]): number | strin
     total += c;
   }
   if (block.units.has(posKey(path[path.length - 1]))) return 'That spot is taken';
+  const line = lineOf(state, u);
+  if (line) {
+    const truck = state.trucks.find((t) => t.id === line.truckId)!;
+    const extra = extendLine(line.tiles, path).length - line.tiles.length;
+    if (extra > hoseLeft(state, truck)) return `Not enough hose — ${hoseLeft(state, truck)} tiles left on ${truck.name}`;
+  }
   return total;
 }
 
@@ -161,7 +180,7 @@ export function actionCost(state: GameState, action: Action): number | string {
     if (!truck) return 'No such truck';
     if (truck.status === 'enroute') return `${truck.name} arrives on turn ${truck.arrivalTurn}`;
     if (truck.status === 'placed') return `${truck.name} is already parked`;
-    return placementError(state, action.pos, action.orientation) ?? 0;
+    return placementError(state, truck, action.pos, action.orientation) ?? 0;
   }
 
   const u = findUnit(state, action.unitId);
@@ -172,23 +191,27 @@ export function actionCost(state: GameState, action: Action): number | string {
     if (truck?.status !== 'placed') return `${u.name} is still on ${truck?.name ?? 'the truck'} — park it first`;
     if (action.type !== 'move') return `${u.name} must get off the truck first`;
   }
+  const line = lineOf(state, u);
 
   let cost: number | string;
   switch (action.type) {
     case 'move':
       cost = pathCost(state, u, action.path);
       break;
-    case 'spray':
-      if (u.maxWater === 0) return `${u.name} has no hose (ladder crew)`;
-      if (u.water <= 0) return 'Out of water — refill next to an engine';
+    case 'spray': {
+      if (!line || line.kind !== 'attack') return 'Needs an attack line — take one from an engine';
+      const truck = state.trucks.find((t) => t.id === line.truckId)!;
+      if (truck.water < SPRAY.water) return `${truck.name} is out of water — supply it from a hydrant`;
       cost = canSprayFrom(state, u.pos, action.target) ?? COST.spray;
       break;
+    }
     case 'toggle': {
       const t = tileAt(state, action.target);
       if (!t || !isAdjacent(u.pos, action.target)) return 'Must be adjacent';
       if (t.kind !== 'door' && t.kind !== 'window') return 'Not a door or window';
       if (t.broken) return 'It is broken and cannot be closed';
       if (t.open && blockers(state).units.has(posKey(action.target))) return 'Someone is in the way';
+      if (t.open && linesThrough(state, action.target).length) return 'A hose runs through it';
       cost = COST.toggle;
       break;
     }
@@ -203,6 +226,7 @@ export function actionCost(state: GameState, action: Action): number | string {
     }
     case 'pickup':
       if (u.carrying) return 'Already carrying someone';
+      if (line) return 'Put the hose down first';
       if (!samePos(u.pos, action.target) && !isAdjacent(u.pos, action.target)) return 'Must be adjacent';
       if (!civilianAt(state, action.target)) return 'Nobody to pick up';
       cost = COST.pickup;
@@ -210,12 +234,45 @@ export function actionCost(state: GameState, action: Action): number | string {
     case 'drop':
       cost = u.carrying ? COST.drop : 'Not carrying anyone';
       break;
-    case 'refill': {
-      if (u.maxWater === 0) return `${u.name} has no hose (ladder crew)`;
-      if (u.water >= u.maxWater) return 'Tank already full';
+    case 'takeLine': {
+      if (line) return 'Already holding a hose';
+      if (u.carrying) return 'Hands full — put the person down first';
       const engines = enginesNear(state, u.pos);
       if (!engines.length) return 'Must be next to an engine';
-      cost = engines.some((e) => e.hydrant || e.water > 0) ? COST.refill : 'The engine is out of water';
+      const max = action.kind === 'attack' ? HOSE.maxAttackLines : HOSE.maxSupplyLines;
+      const engine = engines.find((e) => hoseLeft(state, e) > 0 && state.hoses.filter((l) => l.truckId === e.id && l.kind === action.kind).length < max);
+      if (!engine) return `No ${action.kind} line available — out of hose or lines in use`;
+      cost = COST.takeLine;
+      break;
+    }
+    case 'dropLine':
+      cost = line ? COST.dropLine : 'Not holding a hose';
+      break;
+    case 'pickupLine': {
+      if (line) return 'Already holding a hose';
+      if (u.carrying) return 'Hands full — put the person down first';
+      const end = state.hoses.find((l) => !l.holder && !l.hydrant && samePos(l.tiles[l.tiles.length - 1], u.pos));
+      cost = end ? COST.pickupLine : 'No loose hose end here';
+      break;
+    }
+    case 'returnLine': {
+      if (!line) return 'Not holding a hose';
+      const truck = state.trucks.find((t) => t.id === line.truckId)!;
+      cost = besideTruck(truck, u.pos) ? COST.returnLine : `Walk back to ${truck.name} to pack the line`;
+      break;
+    }
+    case 'hydrant': {
+      const h = hydrantAt(state, action.target);
+      if (!h) return 'Not a hydrant';
+      if (!isAdjacent(u.pos, action.target)) return 'Must be next to the hydrant';
+      const step = HYDRANT_STEPS[h.state];
+      if (!step) return h.state === 'opening' ? 'The hydrant is opening — water arrives next turn' : 'The hydrant is already flowing';
+      if (h.state === 'uncapped') {
+        if (line?.kind !== 'supply') return 'Bring a supply line from an engine to couple';
+        const truck = state.trucks.find((t) => t.id === line.truckId)!;
+        if (hoseLeft(state, truck) < 1) return `Not enough hose to reach the hydrant`;
+      }
+      cost = step.ap;
       break;
     }
     case 'ladder':
@@ -250,12 +307,12 @@ export function performAction(prev: GameState, action: Action): ActionResult {
     truck.orientation = action.orientation;
     truck.status = 'placed';
     for (const crew of state.units) if (crew.aboard === truck.id) crew.pos = { ...truck.pos };
-    truck.hydrant = truck.type === 'engine' && !!hydrantNear(state, truckTiles(truck));
-    log(`${truck.name} parks${truck.hydrant ? ' and hooks up to the hydrant' : ''}.`, 'good');
+    log(`${truck.name} parks${truck.water ? ` with ${truck.water} units of water` : ''}.`, 'good');
     return { state };
   }
 
   const u = findUnit(state, action.unitId)!;
+  const line = lineOf(state, u);
   u.ap -= cost;
 
   switch (action.type) {
@@ -267,6 +324,7 @@ export function performAction(prev: GameState, action: Action): ActionResult {
         u.aboard = undefined;
       }
       if (to.floor !== u.pos.floor) log(`${u.name} climbs to ${floorName(to.floor)}.`);
+      if (line) line.tiles = extendLine(line.tiles, action.path);
       u.pos = { ...to };
       if (carried) carried.pos = { ...to };
       if (carried && isOutside(tileAt(state, to)!) && to.floor === 0) {
@@ -278,7 +336,7 @@ export function performAction(prev: GameState, action: Action): ActionResult {
       break;
     }
     case 'spray': {
-      u.water -= 1;
+      state.trucks.find((t) => t.id === line!.truckId)!.water -= SPRAY.water;
       const t = tileAt(state, action.target)!;
       const wasBurning = t.fire > 0;
       t.fire = Math.max(0, t.fire - SPRAY.knockdown);
@@ -324,13 +382,52 @@ export function performAction(prev: GameState, action: Action): ActionResult {
       log(`${u.name} puts ${c.name} down.`);
       break;
     }
-    case 'refill': {
-      const engine = enginesNear(state, u.pos).sort((a, b) => Number(b.hydrant) - Number(a.hydrant) || b.water - a.water)[0];
-      const need = u.maxWater - u.water;
-      const got = engine.hydrant ? need : Math.min(need, engine.water);
-      if (!engine.hydrant) engine.water -= got;
-      u.water += got;
-      log(`${u.name} refills from ${engine.name}${engine.hydrant ? '' : ` (${engine.water} left in the tank)`}.`);
+    case 'takeLine': {
+      const max = action.kind === 'attack' ? HOSE.maxAttackLines : HOSE.maxSupplyLines;
+      const engine = enginesNear(state, u.pos).find(
+        (e) => hoseLeft(state, e) > 0 && state.hoses.filter((l) => l.truckId === e.id && l.kind === action.kind).length < max,
+      )!;
+      const id = `line${state.nextLineId++}`;
+      state.hoses.push({ id, truckId: engine.id, kind: action.kind, tiles: [{ ...u.pos }], holder: u.id });
+      u.line = id;
+      log(`${u.name} pulls ${action.kind === 'attack' ? 'an attack line' : 'a supply line'} off ${engine.name}.`);
+      break;
+    }
+    case 'dropLine':
+      line!.holder = undefined;
+      u.line = undefined;
+      log(`${u.name} puts the hose down.`);
+      break;
+    case 'pickupLine': {
+      const l = state.hoses.find((l) => !l.holder && !l.hydrant && samePos(l.tiles[l.tiles.length - 1], u.pos))!;
+      l.holder = u.id;
+      u.line = l.id;
+      log(`${u.name} picks up the hose.`);
+      break;
+    }
+    case 'returnLine': {
+      state.hoses = state.hoses.filter((l) => l.id !== line!.id);
+      u.line = undefined;
+      log(`${u.name} packs the hose back onto ${state.trucks.find((t) => t.id === line!.truckId)?.name}.`);
+      break;
+    }
+    case 'hydrant': {
+      const h = hydrantAt(state, action.target)!;
+      if (h.state === 'capped') {
+        h.state = 'uncapped';
+        log(`${u.name} takes the cap off the hydrant.`);
+      } else if (h.state === 'uncapped') {
+        line!.tiles = extendLine(line!.tiles, [{ ...action.target }]);
+        line!.hydrant = { ...action.target };
+        line!.holder = undefined;
+        u.line = undefined;
+        h.state = 'connected';
+        h.lineId = line!.id;
+        log(`${u.name} couples the supply line to the hydrant.`);
+      } else if (h.state === 'connected') {
+        h.state = 'opening';
+        log(`${u.name} opens the hydrant. Water will reach the engine next turn.`, 'good');
+      }
       break;
     }
     case 'ladder': {

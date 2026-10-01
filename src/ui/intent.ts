@@ -1,14 +1,15 @@
 import { actionCost, canSprayFrom, type Action } from '../core/actions';
 import { isAdjacent, isWalkable, samePos, tileAt } from '../core/grid';
+import { hydrantAt } from '../core/hoses';
 import { pathTo } from '../core/pathing';
 import type { GameState, Pos, Unit } from '../core/types';
 
 export type Mode = 'auto' | 'move' | 'spray' | 'door' | 'axe' | 'carry';
 
 export const MODES: { mode: Mode; label: string; key: string; hint: string }[] = [
-  { mode: 'auto', label: 'Auto', key: '1', hint: 'Pick the obvious action for the clicked tile' },
+  { mode: 'auto', label: 'Auto', key: '1', hint: 'Pick the obvious action: move, spray, open doors, pick people up, work hydrants' },
   { mode: 'move', label: 'Move', key: '2', hint: 'Walk to a tile (stairs connect floors)' },
-  { mode: 'spray', label: 'Spray', key: '3', hint: 'Hose a tile up to 3 away in a straight line' },
+  { mode: 'spray', label: 'Spray', key: '3', hint: 'With an attack line: hose a tile up to 3 away in a straight line' },
   { mode: 'door', label: 'Door', key: '4', hint: 'Open or close an adjacent door or window' },
   { mode: 'axe', label: 'Axe', key: '5', hint: 'Breach an adjacent drywall wall, door or window' },
   { mode: 'carry', label: 'Carry', key: '6', hint: 'Pick up an adjacent civilian (click yourself to drop)' },
@@ -53,7 +54,9 @@ export function planClick(state: GameState, unit: Unit, target: Pos, mode: Mode)
       if (civ && !unit.carrying && (isAdjacent(unit.pos, target) || samePos(unit.pos, target))) {
         return single({ type: 'pickup', unitId: id, target });
       }
-      if (t.fire > 0 && unit.maxWater > 0 && !canSprayFrom(state, unit.pos, target)) return single({ type: 'spray', unitId: id, target });
+      if (hydrantAt(state, target) && isAdjacent(unit.pos, target)) return single({ type: 'hydrant', unitId: id, target });
+      const nozzle = state.hoses.some((l) => l.id === unit.line && l.kind === 'attack');
+      if (t.fire > 0 && nozzle && !canSprayFrom(state, unit.pos, target)) return single({ type: 'spray', unitId: id, target });
       if ((t.kind === 'door' || t.kind === 'window') && !t.open && isAdjacent(unit.pos, target)) {
         return single({ type: 'toggle', unitId: id, target });
       }
