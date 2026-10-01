@@ -13,7 +13,11 @@ npm run build      # static build in dist/
 ## The grid
 
 Each level is a grid of equal square tiles: the ground floor, the upper floor, and a walkable roof.
-Upper levels are shown side by side above the ground floor, as a cutaway. The ground floor includes
+The building is stacked and **one floor is shown at a time**; everywhere outside the building you see
+the ground below (yard, road, trucks, hydrants, hoses), slightly darkened on upper floors. The floor
+navigator beside the map has **▲** / **▼** with the current floor number between them (1 = ground);
+a 🔥 on an arrow means fire in that direction, and clicking the number goes back to the ground floor.
+Selecting a firefighter on another floor, or moving one up or down, switches to their floor. The ground floor includes
 the outside: yard, trees, sidewalk, road, driveway and fire hydrants. Roads are 2 tiles wide for one
 lane, or at least 4 tiles wide for two lanes (the street here is 4 wide; the driveway is one 2-wide
 lane).
@@ -113,8 +117,9 @@ Anyone can open and close unlocked doors and windows, which is the simplest vent
   | 1¾″ (red) | 1 | −2 fire | −320 °C / −80 °C | 3 tiles | normal |
   | 2½″ (blue) | 2 | −3 fire | −480 °C / −180 °C | 4 tiles | +1 AP per new tile of hose laid |
 
-- **Hose is limited.** A crew member pulls an attack line from the couplings, or the **5″ supply
-  line** (yellow large-diameter hose, 1 per engine) from anywhere beside the engine. The hose follows their exact path, one tile of hose per tile
+- **The 5″ supply line** (yellow large-diameter hose, 1 per engine) comes off the yellow coupling at
+  the **back** of the engine: stand next to the rear of the truck and click it (or press **S**).
+- **Hose is limited** to what each engine carries. The hose follows their exact path, one tile of hose per tile
   walked, through doors, up stairs and up ladders. They can't go further than the hose left on that
   engine. Walking back along the hose takes it back in. The hose can be put down and picked up by
   someone else, or packed back onto the engine. A door with a hose through it can't be closed.
@@ -135,7 +140,7 @@ Anyone can open and close unlocked doors and windows, which is the simplest vent
 |---|---|---|
 | Move | 1/tile | +1 over furniture, +1 through a window, +1 while carrying someone, +1 in thick smoke, +1 per new tile of 2½″ hose laid. Cannot enter a tile burning at intensity 2+. Stairs and ladders connect floors. |
 | Attack line | 1 | Beside the engine's hose connections; click the 1¾″ or 2½″ coupling. |
-| Supply line | 1 | Beside an engine with hose left. |
+| Supply line | 1 | At the back of an engine; click the yellow coupling. |
 | Put down / pick up hose | 0 / 1 | Pick up the loose end of a line from its tile. |
 | Pack hose | 1 | Next to the line's engine; the whole line goes back on the truck. |
 | Hook up hydrant | up to 5 total | One click; uses your remaining AP and continues next turn — see above. |
@@ -159,7 +164,7 @@ closed door, or walk to the tile by the shortest path (stairs and ladders includ
 **1** Auto, **2** Move, **3** Spray, **4** Door, **5** Tools, **6** Carry. **Enter** ends the turn,
 **Z** undoes within the turn, **A** / **D** / **S** take a 1¾″ attack / 2½″ attack / 5″ supply line, **N** picks up or puts
 down a hose, **B** packs a hose, **Y** hooks up an adjacent hydrant, **G** puts a person down, **E** searches, **P** places or removes a fan, **L**
-raises a ladder, **R** turns a truck being parked, **H**/**V** toggle the heat/smoke overlays, **Esc** cancels. Hover a tile to inspect
+raises a ladder, **R** turns a truck being parked, **↑** / **↓** change floor, **Home** returns to the ground floor, **H**/**V** toggle the heat/smoke overlays, **Esc** cancels. Hover a tile to inspect
 its material, contents, condition and temperature. Dashed orange borders mark tiles close to igniting.
 
 ## Architecture

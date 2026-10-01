@@ -5,11 +5,11 @@ import { conditions, isAdjacent, neighbors, samePos, tileAt } from './core/grid'
 import { CONTENTS, ignitionOf, MATERIALS } from './core/materials';
 import { reachable } from './core/pathing';
 import { HOSE_SIZES, HYDRANT_LABEL, HYDRANT_TOTAL, hoseLeft, hydrantAt, linesThrough, supplyFor } from './core/hoses';
-import { dischargeTiles, placementError, seatOf, truckTiles } from './core/trucks';
+import { dischargeTiles, placementError, seatOf, supplyTiles, truckTiles } from './core/trucks';
 import type { GameState, HoseSize, Orientation, Pos, Truck, Unit } from './core/types';
 import { houseFire } from './scenarios/house';
 import { MODES, planClick, type Mode } from './ui/intent';
-import { drawFloor, TILE, viewRect, type Overlay, type ViewRect } from './ui/render';
+import { drawFloor, isVisible, shownPos, TILE, type Overlay } from './ui/render';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -39,8 +39,9 @@ const FACINGS: { orientation: Orientation; reversed: boolean; label: string }[] 
   { orientation: 'v', reversed: true, label: 'down' },
 ];
 
-const canvases: HTMLCanvasElement[] = [];
-let rects: ViewRect[] = [];
+let canvas: HTMLCanvasElement;
+/** The level being viewed: 0 = ground floor. Outside the building the ground always shows. */
+let viewFloor = 0;
 
 const firefighters = (): Unit[] => state.units.filter((u) => u.kind === 'firefighter');
 const selected = (): Unit | undefined => state.units.find((u) => u.id === selectedId && u.status === 'active');
@@ -50,80 +51,85 @@ function setHint(text: string, error = false): void {
   hint = { text, error };
 }
 
-// ---------------------------------------------------------------- floors & layout
+/** Select a firefighter, switching to their floor if they can't be seen from this one. */
+function select(id: string | undefined): void {
+  selectedId = id;
+  const u = selected();
+  if (u && !u.aboard && !isVisible(state, viewFloor, u.pos)) viewFloor = u.pos.floor;
+}
 
-function buildFloors(): void {
+function setFloor(f: number): void {
+  viewFloor = Math.max(0, Math.min(state.floors.length - 1, f));
+  hover = undefined;
+  render();
+}
+
+// ---------------------------------------------------------------- stage & layout
+
+/** One canvas for the whole site, plus the floor navigator beside it. */
+function buildStage(): void {
   const root = $('floors');
   root.innerHTML = '';
-  canvases.length = 0;
-  rects = state.floors.map((_, f) => viewRect(state, f));
-  // Upper levels (roof first) side by side above the ground floor, like a cutaway of the building.
-  const upper = document.createElement('div');
-  upper.className = 'upper-floors';
-  root.append(upper);
-  for (let f = state.floors.length - 1; f >= 0; f--) {
-    const wrap = document.createElement('div');
-    wrap.className = 'floor';
-    const h = document.createElement('h3');
-    h.id = `floor-label-${f}`;
-    const canvas = document.createElement('canvas');
-    canvas.width = rects[f].cols * TILE;
-    canvas.height = rects[f].rows * TILE;
-    canvas.addEventListener('mousemove', (e) => {
-      hover = eventPos(canvas, f, e);
-      renderInspector();
-    });
-    canvas.addEventListener('mouseleave', () => {
-      hover = undefined;
-      renderInspector();
-    });
-    canvas.addEventListener('click', (e) => {
-      const p = eventPos(canvas, f, e);
-      if (p) onTileClick(p, tileFraction(canvas, f, e));
-    });
-    canvas.addEventListener('contextmenu', (e) => {
-      if (!placing) return;
-      e.preventDefault();
-      rotatePlacement();
-    });
-    canvases[f] = canvas;
-    wrap.append(h, canvas);
-    (f === 0 ? root : upper).append(wrap);
-  }
+  const stage = document.createElement('div');
+  stage.className = 'stage';
+  const nav = document.createElement('nav');
+  nav.className = 'floor-nav';
+  nav.setAttribute('aria-label', 'Floors');
+  nav.innerHTML = `
+    <button id="floor-up" class="floor-arrow" title="Up a floor (↑)">▲<span class="fire-dot" id="fire-up"></span></button>
+    <button id="floor-num" class="floor-num" title="Back to the ground floor (Home)"></button>
+    <div id="floor-name" class="floor-name"></div>
+    <button id="floor-down" class="floor-arrow" title="Down a floor (↓)">▼<span class="fire-dot" id="fire-down"></span></button>`;
+  canvas = document.createElement('canvas');
+  canvas.width = state.width * TILE;
+  canvas.height = state.height * TILE;
+  canvas.addEventListener('mousemove', (e) => {
+    hover = eventPos(e);
+    renderInspector();
+  });
+  canvas.addEventListener('mouseleave', () => {
+    hover = undefined;
+    renderInspector();
+  });
+  canvas.addEventListener('click', (e) => {
+    const p = eventPos(e);
+    if (p) onTileClick(p, tileFraction(e));
+  });
+  canvas.addEventListener('contextmenu', (e) => {
+    if (!placing) return;
+    e.preventDefault();
+    rotatePlacement();
+  });
+  stage.append(nav, canvas);
+  root.append(stage);
+  $('floor-up').addEventListener('click', () => setFloor(viewFloor + 1));
+  $('floor-down').addEventListener('click', () => setFloor(viewFloor - 1));
+  $('floor-num').addEventListener('click', () => setFloor(0));
   layout();
 }
 
-/** Sizes every floor canvas with the same on-screen tile size, fitting the viewport where possible. */
+/** Fits the site into the space beside the navigator, keeping tiles square. */
 function layout(): void {
-  const root = $('floors');
-  const width = root.clientWidth;
-  const upper = rects.slice(1);
-  const upperCols = upper.reduce((n, r) => n + r.cols, 0);
-  const upperRows = Math.max(0, ...upper.map((r) => r.rows));
-  const gaps = 14 * Math.max(0, upper.length - 1);
-  const maxCols = Math.max(rects[0].cols, upperCols);
-  const available = window.innerHeight - 70 - 2 * 34;
-  const tile = Math.max(14, Math.min(40, Math.floor(Math.min((width - gaps) / maxCols, available / (rects[0].rows + upperRows)))));
-  canvases.forEach((c, f) => {
-    c.style.width = `${rects[f].cols * tile}px`;
-    c.style.height = `${rects[f].rows * tile}px`;
-  });
+  const width = $('floors').clientWidth - 96;
+  const available = window.innerHeight - 90;
+  const tile = Math.max(14, Math.min(44, Math.floor(Math.min(width / state.width, available / state.height))));
+  canvas.style.width = `${state.width * tile}px`;
+  canvas.style.height = `${state.height * tile}px`;
 }
 
-function eventPos(canvas: HTMLCanvasElement, floor: number, e: MouseEvent): Pos | undefined {
+/** The tile under the mouse, as it is shown on the current floor (the ground, outside the building). */
+function eventPos(e: MouseEvent): Pos | undefined {
   const r = canvas.getBoundingClientRect();
-  const v = rects[floor];
-  const x = v.x0 + Math.floor(((e.clientX - r.left) / r.width) * v.cols);
-  const y = v.y0 + Math.floor(((e.clientY - r.top) / r.height) * v.rows);
-  return x >= v.x0 && y >= v.y0 && x < v.x0 + v.cols && y < v.y0 + v.rows ? { floor, x, y } : undefined;
+  const x = Math.floor(((e.clientX - r.left) / r.width) * state.width);
+  const y = Math.floor(((e.clientY - r.top) / r.height) * state.height);
+  return x >= 0 && y >= 0 && x < state.width && y < state.height ? shownPos(state, viewFloor, x, y) : undefined;
 }
 
 /** Where inside its tile a click landed, 0..1 on each axis. */
-function tileFraction(canvas: HTMLCanvasElement, floor: number, e: MouseEvent): { fx: number; fy: number } {
+function tileFraction(e: MouseEvent): { fx: number; fy: number } {
   const r = canvas.getBoundingClientRect();
-  const v = rects[floor];
-  const gx = ((e.clientX - r.left) / r.width) * v.cols;
-  const gy = ((e.clientY - r.top) / r.height) * v.rows;
+  const gx = ((e.clientX - r.left) / r.width) * state.width;
+  const gy = ((e.clientY - r.top) / r.height) * state.height;
   return { fx: gx - Math.floor(gx), fy: gy - Math.floor(gy) };
 }
 
@@ -131,8 +137,9 @@ function tileFraction(canvas: HTMLCanvasElement, floor: number, e: MouseEvent): 
  * A click on an engine's hose connections: the half toward the front is the
  * red 1¾″ coupling, the half toward the back the blue 2½″.
  */
-function couplingClick(p: Pos, frac: { fx: number; fy: number }): { size: HoseSize; side: 0 | 1 } | undefined {
+function couplingClick(p: Pos, frac: { fx: number; fy: number }): { size: HoseSize; side?: 0 | 1 } | undefined {
   for (const truck of state.trucks) {
+    if (supplyTiles(truck).some((q) => samePos(q, p))) return { size: '5' };
     const d = dischargeTiles(truck).find((d) => samePos(d.pos, p));
     if (!d) continue;
     const along = truck.orientation === 'h' ? frac.fx : frac.fy;
@@ -159,6 +166,7 @@ function commit(actions: Action[]): boolean {
   if (s !== before) {
     history.push(before);
     state = s;
+    select(selectedId); // follow the selected firefighter up or down stairs and ladders
   }
   setHint(error ?? '', !!error);
   render();
@@ -184,7 +192,11 @@ function onTileClick(p: Pos, frac = { fx: 0.5, fy: 0.5 }): void {
   // Clicking a hose coupling with a firefighter beside it takes that attack line.
   const coupling = couplingClick(p, frac);
   if (coupling && sel && !sel.aboard) {
-    commit([{ type: 'takeLine', unitId: sel.id, kind: 'attack', size: coupling.size, side: coupling.side }]);
+    commit([
+      coupling.size === '5'
+        ? { type: 'takeLine', unitId: sel.id, kind: 'supply' }
+        : { type: 'takeLine', unitId: sel.id, kind: 'attack', size: coupling.size, side: coupling.side },
+    ]);
     return;
   }
   // Clicking another firefighter selects them, unless an explicit mode targets that tile.
@@ -228,6 +240,7 @@ function setHintAndRender(text: string, error = false): void {
 }
 
 function startPlacing(truck: Truck): void {
+  viewFloor = 0; // trucks park on the ground
   placing = { truckId: truck.id, orientation: placing?.orientation ?? 'h', reversed: placing?.reversed ?? false };
   setHintAndRender(
     `Click a road or driveway tile to park ${truck.name}. R or right-click turns it (the arrow and white headlights mark the front, red lights the back). Esc cancels.`,
@@ -276,7 +289,7 @@ function cycleSelection(): void {
   const usable = firefighters().filter((u) => u.status === 'active' && (!u.aboard || truckById(u.aboard)?.status === 'placed'));
   if (!usable.length) return;
   const i = usable.findIndex((u) => u.id === selectedId);
-  selectedId = usable[(i + 1) % usable.length].id;
+  select(usable[(i + 1) % usable.length].id);
   render();
 }
 
@@ -370,7 +383,7 @@ function crewCard(u: Unit): HTMLButtonElement {
     <div class="bar"><span style="width:${(100 * u.hp) / u.maxHp}%"></span></div>
     <span class="meta">${task}${water}${where}${carrying ? ` · carrying ${carrying}` : ''}</span>`;
   b.addEventListener('click', () => {
-    selectedId = u.id;
+    select(u.id);
     placing = undefined;
     render();
   });
@@ -547,12 +560,18 @@ function renderModal(): void {
   $('again').addEventListener('click', restart);
 }
 
-function renderFloorLabels(): void {
-  state.floors.forEach((rows, f) => {
-    const burning = rows.flat().filter((t) => t.fire > 0).length;
-    const name = levelName(f);
-    $(`floor-label-${f}`).innerHTML = `<span>${name}</span>${burning ? `<span class="fire-count">🔥 ${burning}</span>` : ''}`;
-  });
+function renderNavigator(): void {
+  const top = state.floors.length - 1;
+  const burning = (f: number) => state.floors[f].flat().some((t) => t.fire > 0);
+  const fireAbove = state.floors.some((_, f) => f > viewFloor && burning(f));
+  const fireBelow = state.floors.some((_, f) => f < viewFloor && burning(f));
+  ($('floor-up') as HTMLButtonElement).disabled = viewFloor >= top;
+  ($('floor-down') as HTMLButtonElement).disabled = viewFloor <= 0;
+  $('fire-up').textContent = fireAbove ? '🔥' : '';
+  $('fire-down').textContent = fireBelow ? '🔥' : '';
+  $('floor-num').textContent = String(viewFloor + 1);
+  const count = state.floors[viewFloor].flat().filter((t) => t.fire > 0).length;
+  $('floor-name').innerHTML = `${levelName(viewFloor)}${count ? `<br><span class="fire-count">🔥 ${count}</span>` : ''}`;
 }
 
 // ---------------------------------------------------------------- drawing
@@ -574,9 +593,7 @@ function drawAll(time: number): void {
     reversed: placing.reversed,
     error: hover ? placementError(state, truckById(placing.truckId)!, hover, placing.orientation) : 'no position',
   };
-  canvases.forEach((c, f) => {
-    drawFloor(c.getContext('2d')!, state, f, { selected: sel, hover, stops, mode, overlay, time, placing: placingView }, rects[f]);
-  });
+  drawFloor(canvas.getContext('2d')!, state, viewFloor, { selected: sel, hover, stops, mode, overlay, time, placing: placingView });
 }
 
 function render(): void {
@@ -585,7 +602,7 @@ function render(): void {
   renderModes();
   renderInspector();
   renderLog();
-  renderFloorLabels();
+  renderNavigator();
   renderModal();
 }
 
@@ -600,7 +617,8 @@ function restart(): void {
   placing = undefined;
   selectedId = undefined;
   mode = 'auto';
-  buildFloors();
+  viewFloor = 0;
+  buildStage();
   const first = state.trucks.find((t) => t.status === 'staged');
   if (first) startPlacing(first);
   else render();
@@ -658,6 +676,14 @@ window.addEventListener('keydown', (e) => {
     case 'v':
       overlay = overlay === 'smoke' ? 'normal' : 'smoke';
       return render();
+    case 'arrowup':
+      e.preventDefault();
+      return setFloor(viewFloor + 1);
+    case 'arrowdown':
+      e.preventDefault();
+      return setFloor(viewFloor - 1);
+    case 'home':
+      return setFloor(0);
     case 'escape':
       if (placing) {
         placing = undefined;

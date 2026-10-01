@@ -47,6 +47,13 @@ export function dischargeTiles(truck: Truck): { side: 0 | 1; pos: Pos }[] {
   ].filter((d): d is { side: 0 | 1; pos: Pos } => !!d.pos);
 }
 
+/** An engine's 5″ supply line coupling: the rear tiles of the truck. */
+export function supplyTiles(truck: Truck): Pos[] {
+  if (truck.type !== 'engine') return [];
+  const tiles = seatTiles(truck);
+  return tiles.slice(-2);
+}
+
 /** Map of tile key → truck occupying it. */
 export function truckOccupancy(state: GameState): Map<string, Truck> {
   const m = new Map<string, Truck>();

@@ -4,7 +4,7 @@ import { DIRS, isAdjacent, isOpenAir, isOutside, isWalkable, neighbors, posKey, 
 import { extendLine, HOSE, HOSE_SIZES, hoseLeft, hydrantAt, hydrantWorkAvailable, HYDRANT_TOTAL, linesThrough, workHydrant } from './hoses';
 import { CONTENTS } from './materials';
 import { searchAround, searchCost, SEARCH, spotVictims } from './search';
-import { besideTruck, dischargeTiles, enginesNear, placementError, truckOccupancy, truckTiles } from './trucks';
+import { besideTruck, dischargeTiles, placementError, supplyTiles, truckOccupancy, truckTiles } from './trucks';
 import type { GameState, HoseKind, HoseLine, HoseSize, LogEntry, Orientation, Pos, Truck, Unit } from './types';
 
 export type Action =
@@ -253,6 +253,22 @@ export function attackSource(state: GameState, u: Unit, size: HoseSize, side?: 0
     : "Stand beside an engine's hose connections, halfway down a long side";
 }
 
+/** The rear coupling a firefighter would pull the 5″ supply line from, or why they can't. */
+export function supplySource(state: GameState, u: Unit): { engine: Truck; origin: Pos } | string {
+  let busy = false;
+  for (const engine of state.trucks) {
+    const origin = supplyTiles(engine).find((p) => isAdjacent(u.pos, p));
+    if (!origin) continue;
+    if (state.hoses.filter((l) => l.truckId === engine.id && l.kind === 'supply').length >= HOSE.maxSupplyLines) {
+      busy = true;
+      continue;
+    }
+    if (hoseLeft(state, engine) <= 0) return `${engine.name} is out of hose`;
+    return { engine, origin };
+  }
+  return busy ? 'The supply line is already in use' : 'Stand at the back of an engine to take the 5″ supply line';
+}
+
 /** AP cost of an action (0 for truck placement), or the reason it cannot be performed. */
 export function actionCost(state: GameState, action: Action): number | string {
   if (state.status !== 'playing') return 'The incident is over';
@@ -325,12 +341,8 @@ export function actionCost(state: GameState, action: Action): number | string {
         const src = attackSource(state, u, action.size ?? '1.75', action.side);
         if (typeof src === 'string') return src;
       } else {
-        const engines = enginesNear(state, u.pos);
-        if (!engines.length) return 'Must be next to an engine';
-        const engine = engines.find(
-          (e) => hoseLeft(state, e) > 0 && state.hoses.filter((l) => l.truckId === e.id && l.kind === 'supply').length < HOSE.maxSupplyLines,
-        );
-        if (!engine) return 'No supply line available — out of hose or already in use';
+        const src = supplySource(state, u);
+        if (typeof src === 'string') return src;
       }
       cost = COST.takeLine;
       break;
@@ -519,11 +531,7 @@ export function performAction(prev: GameState, action: Action): ActionResult {
         state.hoses.push({ id, truckId: src.engine.id, kind: 'attack', size, side: src.side, origin: src.origin, tiles: [{ ...u.pos }], holder: u.id });
         log(`${u.name} pulls a ${HOSE_SIZES[size].label} attack line off ${src.engine.name}.`);
       } else {
-        const engine = enginesNear(state, u.pos).find(
-          (e) => hoseLeft(state, e) > 0 && state.hoses.filter((l) => l.truckId === e.id && l.kind === 'supply').length < HOSE.maxSupplyLines,
-        )!;
-        const near = (p: Pos) => Math.abs(p.x - u.pos.x) + Math.abs(p.y - u.pos.y);
-        const origin = truckTiles(engine).sort((a, b) => near(a) - near(b))[0];
+        const { engine, origin } = supplySource(state, u) as Exclude<ReturnType<typeof supplySource>, string>;
         state.hoses.push({ id, truckId: engine.id, kind: 'supply', size: '5', origin, tiles: [{ ...u.pos }], holder: u.id });
         log(`${u.name} pulls the 5″ supply line off ${engine.name}.`);
       }

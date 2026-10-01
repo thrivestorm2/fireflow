@@ -211,12 +211,17 @@ describe('hydrants', () => {
   const hydrant = P(1, 2);
   const click = (unitId = 'ff1'): Action => ({ type: 'hydrant', unitId, target: hydrant });
 
-  /** Engine parked at the right end of the road; ff1 walks a supply line to the hydrant on the left. */
+  /**
+   * Engine parked at the right end of the road facing right, so its rear (and the
+   * supply coupling) is at x 7. ff1 walks the supply line to the hydrant on the left.
+   */
   function supplyToHydrant(): GameState {
-    let s = run(staged(), place('truck1', 7));
-    s = run(s, move('ff1', P(7, 2), P(6, 2)), { type: 'takeLine', unitId: 'ff1', kind: 'supply' });
+    let s = run(staged(), { type: 'placeTruck', truckId: 'truck1', pos: P(7, 0), orientation: 'h', reversed: true });
+    s = run(s, move('ff1', P(7, 2)), { type: 'takeLine', unitId: 'ff1', kind: 'supply' }, move('ff1', P(6, 2), P(5, 2)));
     s = fresh(s);
-    return run(s, move('ff1', P(5, 2), P(4, 2), P(3, 2), P(2, 2))); // 0 AP left
+    s = run(s, move('ff1', P(4, 2), P(3, 2), P(2, 2)));
+    s.units[0].ap = 0;
+    return s;
   }
 
   it('one click starts the hookup and the firefighter finishes it over the following turns', () => {
@@ -234,7 +239,7 @@ describe('hydrants', () => {
     s = endTurn(s);
     expect(s.hydrants[0]).toMatchObject({ state: 'opening', work: 5 });
     expect(s.units[0]).toMatchObject({ task: undefined, line: undefined, ap: 1 });
-    expect(s.hoses[0].tiles).toHaveLength(6); // five tiles walked plus the hydrant coupling
+    expect(s.hoses[0].tiles).toHaveLength(7); // six tiles from the rear of the engine plus the hydrant coupling
     expect(s.trucks[0].water).toBe(5); // no water until the next fire phase
 
     s = endTurn(s);
@@ -263,6 +268,17 @@ describe('hydrants', () => {
     expect(s.units[0].task).toBeUndefined();
     s = endTurn(s);
     expect(s.hydrants[0].work).toBe(1);
+  });
+
+  it('the 5″ supply line comes off the coupling at the back of the engine', () => {
+    let s = run(staged(), place('truck1', 0)); // facing left: the rear is at x 4
+    s = standAt(s, 'ff1', 2, 2);
+    expect(performAction(s, { type: 'takeLine', unitId: 'ff1', kind: 'supply' }).error).toMatch(/back of an engine/);
+    s = standAt(s, 'ff1', 5, 0);
+    s = run(s, { type: 'takeLine', unitId: 'ff1', kind: 'supply' });
+    expect(s.hoses[0]).toMatchObject({ size: '5', origin: P(4, 0) });
+    s = standAt(s, 'ff2', 5, 1);
+    expect(performAction(s, { type: 'takeLine', unitId: 'ff2', kind: 'supply' }).error).toMatch(/already in use/);
   });
 
   it('without a supply line only the cap comes off', () => {

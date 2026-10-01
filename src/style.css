@@ -61,20 +61,9 @@ button.primary:hover:not(:disabled) { background: #c4461a; }
 }
 
 .floors { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
-.upper-floors { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; }
-.floor h3 {
-  margin: 0 0 6px;
-  font-size: 13px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--muted);
-  display: flex;
-  gap: 10px;
-}
-.floor h3 .fire-count { color: var(--fire); }
-.floor canvas {
+.stage { display: flex; gap: 14px; align-items: center; }
+.stage canvas {
   display: block;
-  /* Width and height are set from JS so every floor shares one tile size. */
   max-width: 100%;
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -82,6 +71,34 @@ button.primary:hover:not(:disabled) { background: #c4461a; }
   background: #000;
 }
 
+/* Floor navigator: up arrow, current floor number (click → ground floor), down arrow. */
+.floor-nav {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 72px;
+}
+.floor-arrow {
+  position: relative;
+  width: 64px;
+  height: 56px;
+  font-size: 26px;
+  line-height: 1;
+  padding: 0;
+}
+.floor-arrow .fire-dot { position: absolute; top: 2px; right: 4px; font-size: 13px; }
+.floor-num {
+  width: 64px;
+  height: 64px;
+  font-size: 34px;
+  font-weight: 800;
+  padding: 0;
+  background: #12384a;
+  border: 2px solid var(--accent);
+}
+.floor-name { color: var(--muted); font-size: 12px; text-align: center; min-height: 2.6em; }
+.floor-name .fire-count { color: var(--fire); }
 .sidebar { display: flex; flex-direction: column; gap: 12px; }
 .panel {
   background: var(--panel);

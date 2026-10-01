@@ -1,7 +1,7 @@
 import { canSprayFrom, nozzleRange } from '../core/actions';
 import { AMBIENT, ignitionOf } from '../core/materials';
 import { hydrantAt } from '../core/hoses';
-import { dischargeTiles, footprint, seatOf, truckTiles } from '../core/trucks';
+import { dischargeTiles, footprint, seatOf, supplyTiles, truckTiles } from '../core/trucks';
 import type { Fan, GameState, HoseLine, Orientation, Pos, Tile, Truck, Unit } from '../core/types';
 import { fanRunning } from '../core/ventilation';
 
@@ -29,23 +29,26 @@ export interface ViewState {
   placing?: { truck: Truck; orientation: Orientation; reversed: boolean; error: string | null };
 }
 
-/** Ground floor is shown whole; upper floors are cropped to the building plus a one-tile margin. */
-export function viewRect(state: GameState, floor: number): ViewRect {
-  if (floor === 0) return { x0: 0, y0: 0, cols: state.width, rows: state.height };
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  state.floors[floor].forEach((row, y) =>
-    row.forEach((t, x) => {
-      if (t.kind === 'air') return;
-      minX = Math.min(minX, x);
-      maxX = Math.max(maxX, x);
-      minY = Math.min(minY, y);
-      maxY = Math.max(maxY, y);
-    }),
-  );
-  if (!Number.isFinite(minX)) return { x0: 0, y0: 0, cols: state.width, rows: state.height };
-  const x0 = Math.max(0, minX - 1);
-  const y0 = Math.max(0, minY - 1);
-  return { x0, y0, cols: Math.min(state.width - 1, maxX + 1) - x0 + 1, rows: Math.min(state.height - 1, maxY + 1) - y0 + 1 };
+/** The whole site is drawn for every level. */
+export function siteRect(state: GameState): ViewRect {
+  return { x0: 0, y0: 0, cols: state.width, rows: state.height };
+}
+
+/**
+ * What the player sees at (x, y) while looking at `floor`: the floor's own
+ * tile where the building is, otherwise the ground below (yard, road, trucks).
+ * A ladder standing in open air belongs to the floor it reaches.
+ */
+export function shownPos(state: GameState, floor: number, x: number, y: number): Pos {
+  const t = state.floors[floor]?.[y]?.[x];
+  if (floor > 0 && t && t.kind === 'air' && !t.ladder) return { floor: 0, x, y };
+  return { floor, x, y };
+}
+
+/** Whether something at `p` can be seen while looking at `floor`. */
+export function isVisible(state: GameState, floor: number, p: Pos): boolean {
+  const shown = shownPos(state, floor, p.x, p.y);
+  return shown.floor === p.floor;
 }
 
 const MATERIAL_COLOR: Record<string, string> = {
@@ -539,22 +542,28 @@ function drawTruckShape(g: CanvasRenderingContext2D, truck: Truck, tiles: Pos[],
   g.globalAlpha = 1;
 }
 
-export function drawFloor(g: CanvasRenderingContext2D, state: GameState, floor: number, view: ViewState, rect: ViewRect): void {
+export function drawFloor(g: CanvasRenderingContext2D, state: GameState, floor: number, view: ViewState): void {
   const S = TILE;
+  const rect = siteRect(state);
   g.clearRect(0, 0, g.canvas.width, g.canvas.height);
-  const inView = (p: Pos) => p.floor === floor && p.x >= rect.x0 && p.y >= rect.y0 && p.x < rect.x0 + rect.cols && p.y < rect.y0 + rect.rows;
-  const px = (x: number) => (x - rect.x0) * S;
-  const py = (y: number) => (y - rect.y0) * S;
+  const seen = (p: Pos) => isVisible(state, floor, p);
+  const px = (x: number) => x * S;
+  const py = (y: number) => y * S;
+  const W = state.width;
+  const H = state.height;
+  const shown = (x: number, y: number) => shownPos(state, floor, x, y);
+  const tileOf = (p: Pos) => state.floors[p.floor][p.y][p.x];
 
-  for (let y = rect.y0; y < rect.y0 + rect.rows; y++) {
-    for (let x = rect.x0; x < rect.x0 + rect.cols; x++) {
-      const t = state.floors[floor][y][x];
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const at = shown(x, y);
+      const t = tileOf(at);
       drawBase(g, t, px(x), py(y), x, y);
       if (t.contents !== 'tree') drawContents(g, t, px(x), py(y));
-      if (t.contents === 'hydrant') drawHydrantState(g, state, { floor, x, y }, px(x), py(y), view.time);
+      if (t.contents === 'hydrant') drawHydrantState(g, state, at, px(x), py(y), view.time);
       // Centre line between the two lanes of a road at least four tiles wide.
       if (t.material === 'asphalt') {
-        const col = state.floors[floor];
+        const col = state.floors[at.floor];
         let above = 0;
         let below = 0;
         while (col[y - above - 1]?.[x]?.material === 'asphalt') above++;
@@ -570,19 +579,20 @@ export function drawFloor(g: CanvasRenderingContext2D, state: GameState, floor: 
         g.fillRect(px(x) + S - 6, py(y) + S - 6, 3, 3);
       }
       if (t.ladder) drawLadder(g, px(x), py(y));
-      if (view.placing && t.drivable) {
+      if (view.placing && t.drivable && at.floor === 0) {
         g.strokeStyle = 'rgba(79,209,255,0.35)';
         g.strokeRect(px(x) + 1.5, py(y) + 1.5, S - 3, S - 3);
       }
     }
   }
   // Trees overhang neighbouring tiles, so draw them after the ground.
-  for (let y = rect.y0; y < rect.y0 + rect.rows; y++) {
-    for (let x = rect.x0; x < rect.x0 + rect.cols; x++) {
-      const t = state.floors[floor][y][x];
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const at = shown(x, y);
+      const t = tileOf(at);
       if (t.contents === 'tree') drawContents(g, t, px(x), py(y));
       drawOverlay(g, t, px(x), py(y), view.overlay);
-      if (t.fire > 0) drawFire(g, t, px(x), py(y), view.time, x * 31 + y * 17 + floor * 7);
+      if (t.fire > 0) drawFire(g, t, px(x), py(y), view.time, x * 31 + y * 17 + at.floor * 7);
       if (atRisk(t)) {
         g.strokeStyle = '#ff8c1a';
         g.setLineDash([4, 3]);
@@ -592,23 +602,21 @@ export function drawFloor(g: CanvasRenderingContext2D, state: GameState, floor: 
     }
   }
 
-  if (floor === 0) {
-    for (const truck of state.trucks) {
-      const tiles = truckTiles(truck);
-      if (!tiles.length) continue;
-      drawTruckShape(g, truck, tiles, rect, 1);
-      drawCouplings(g, state, truck, rect, view);
-    }
+  for (const truck of state.trucks) {
+    const tiles = truckTiles(truck);
+    if (!tiles.length || !tiles.every(seen)) continue;
+    drawTruckShape(g, truck, tiles, rect, 1);
+    drawCouplings(g, state, truck, rect, view);
   }
 
-  drawHoses(g, state, floor, rect, view.time);
+  drawHoses(g, state, seen, view.time);
 
   const sel = view.selected;
   if (sel && sel.status === 'active' && !view.placing) {
     if ((view.mode === 'auto' || view.mode === 'move') && view.stops) {
       for (const key of view.stops) {
         const [f, x, y] = key.split(',').map(Number);
-        if (f !== floor) continue;
+        if (!seen({ floor: f, x, y })) continue;
         g.fillStyle = 'rgba(79,209,255,0.16)';
         g.fillRect(px(x), py(y), S, S);
         g.strokeStyle = 'rgba(79,209,255,0.45)';
@@ -617,11 +625,13 @@ export function drawFloor(g: CanvasRenderingContext2D, state: GameState, floor: 
     }
     const nozzle = state.hoses.find((l) => l.id === sel.line && l.kind === 'attack');
     const reach = nozzleRange(state, sel);
-    if ((view.mode === 'spray' || view.mode === 'auto') && nozzle && sel.pos.floor === floor) {
-      for (let y = rect.y0; y < rect.y0 + rect.rows; y++) {
-        for (let x = rect.x0; x < rect.x0 + rect.cols; x++) {
-          const t = state.floors[floor][y][x];
-          if ((view.mode === 'spray' || t.fire > 0) && !canSprayFrom(state, sel.pos, { floor, x, y }, reach)) {
+    if ((view.mode === 'spray' || view.mode === 'auto') && nozzle && !sel.aboard) {
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          const at = shown(x, y);
+          if (at.floor !== sel.pos.floor) continue;
+          const t = tileOf(at);
+          if ((view.mode === 'spray' || t.fire > 0) && !canSprayFrom(state, sel.pos, at, reach)) {
             g.strokeStyle = t.fire > 0 ? '#2196f3' : 'rgba(33,150,243,0.5)';
             g.lineWidth = 2;
             g.strokeRect(px(x) + 2, py(y) + 2, S - 4, S - 4);
@@ -632,25 +642,33 @@ export function drawFloor(g: CanvasRenderingContext2D, state: GameState, floor: 
     }
   }
 
-  for (const fan of state.fans) if (inView(fan.pos)) drawFan(g, state, fan, px(fan.pos.x), py(fan.pos.y), view.time);
+  for (const fan of state.fans) if (seen(fan.pos)) drawFan(g, state, fan, px(fan.pos.x), py(fan.pos.y), view.time);
 
   // Crew still aboard sit on their truck, front seats first, and can be clicked like anyone else.
   for (const u of state.units) {
     if (!u.aboard || u.status !== 'active') continue;
     const seat = seatOf(state, u);
-    if (seat && inView(seat)) drawUnit(g, u, px(seat.x), py(seat.y), sel?.id === u.id);
+    if (seat && seen(seat)) drawUnit(g, u, px(seat.x), py(seat.y), sel?.id === u.id);
   }
 
   for (const u of state.units) {
-    if (u.status === 'rescued' || u.aboard || u.carriedBy || !inView(u.pos)) continue;
+    if (u.status === 'rescued' || u.aboard || u.carriedBy || !seen(u.pos)) continue;
     if (u.kind === 'civilian' && !u.found) continue; // nobody has found them yet
     drawUnit(g, u, px(u.pos.x), py(u.pos.y), sel?.id === u.id);
     const carried = u.carrying && state.units.find((c) => c.id === u.carrying);
     if (carried) drawUnit(g, carried, px(u.pos.x), py(u.pos.y), false);
   }
 
-  if (view.placing && view.hover && floor === 0) {
-    const tiles = footprint(view.hover, view.placing.orientation, view.placing.truck.type).filter(inView);
+  // On upper levels, shade the ground so the floor being viewed stands out.
+  if (floor > 0) {
+    g.fillStyle = 'rgba(8,12,18,0.28)';
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (shown(x, y).floor === 0) g.fillRect(px(x), py(y), S, S);
+  }
+
+  if (view.placing && view.hover) {
+    const tiles = footprint({ ...view.hover, floor: 0 }, view.placing.orientation, view.placing.truck.type).filter(
+      (p) => p.x >= 0 && p.y >= 0 && p.x < W && p.y < H,
+    );
     if (tiles.length) {
       drawTruckShape(g, { ...view.placing.truck, orientation: view.placing.orientation, reversed: view.placing.reversed }, tiles, rect, 0.7, true);
       g.strokeStyle = view.placing.error ? '#ef5350' : '#66bb6a';
@@ -658,7 +676,7 @@ export function drawFloor(g: CanvasRenderingContext2D, state: GameState, floor: 
       for (const p of tiles) g.strokeRect(px(p.x) + 2, py(p.y) + 2, S - 4, S - 4);
       g.lineWidth = 1;
     }
-  } else if (view.hover && view.hover.floor === floor) {
+  } else if (view.hover) {
     g.strokeStyle = '#ffffff';
     g.lineWidth = 2;
     g.strokeRect(px(view.hover.x) + 1, py(view.hover.y) + 1, S - 2, S - 2);
@@ -672,18 +690,18 @@ export const HOSE_COLOR = { '1.75': '#e53935', '2.5': '#1e88e5', '5': '#fdd835' 
 const HOSE_WIDTH = { '1.75': 3, '2.5': 5, '5': 8 } as const;
 
 /** Hose lines: blue attack lines, thick yellow 5" supply lines. Dashed when no water is behind them. */
-function drawHoses(g: CanvasRenderingContext2D, state: GameState, floor: number, rect: ViewRect, time: number): void {
+function drawHoses(g: CanvasRenderingContext2D, state: GameState, seen: (p: Pos) => boolean, time: number): void {
   const S = TILE;
-  const cx = (p: Pos) => (p.x - rect.x0) * S + S / 2;
-  const cy = (p: Pos) => (p.y - rect.y0) * S + S / 2;
+  const cx = (p: Pos) => p.x * S + S / 2;
+  const cy = (p: Pos) => p.y * S + S / 2;
   state.hoses.forEach((line, i) => {
     const truck = state.trucks.find((t) => t.id === line.truckId);
     if (!truck) return;
     const off = ((i % 3) - 1) * 4;
     const pts: (Pos | null)[] = [];
     // Start at the coupling on the truck.
-    if (line.tiles[0].floor === floor && floor === 0) pts.push(line.origin);
-    for (const p of line.tiles) pts.push(p.floor === floor ? p : null);
+    if (seen(line.tiles[0]) && seen(line.origin)) pts.push(line.origin);
+    for (const p of line.tiles) pts.push(seen(p) ? p : null);
     const charged = line.kind === 'supply' ? isSupplyCharged(state, line) : truck.water > 0;
     g.strokeStyle = HOSE_COLOR[line.size];
     g.lineWidth = HOSE_WIDTH[line.size] + (charged ? 1 : 0);
@@ -716,7 +734,7 @@ function drawHoses(g: CanvasRenderingContext2D, state: GameState, floor: number,
     g.lineWidth = 1;
     g.lineCap = 'butt';
     const end = line.tiles[line.tiles.length - 1];
-    if (line.kind === 'attack' && end.floor === floor) {
+    if (line.kind === 'attack' && seen(end)) {
       g.fillStyle = '#9e9e9e';
       g.strokeStyle = '#212121';
       g.beginPath();
@@ -729,7 +747,7 @@ function drawHoses(g: CanvasRenderingContext2D, state: GameState, floor: number,
         g.arc(cx(end) + off, cy(end) + off, 8, 0, Math.PI * 2);
         g.stroke();
       }
-    } else if (line.kind === 'supply' && !line.hydrant && !line.holder && end.floor === floor) {
+    } else if (line.kind === 'supply' && !line.hydrant && !line.holder && seen(end)) {
       g.strokeStyle = HOSE_COLOR[line.size];
       g.beginPath();
       g.arc(cx(end) + off, cy(end) + off, 8, 0, Math.PI * 2);
@@ -803,9 +821,10 @@ function drawFan(g: CanvasRenderingContext2D, state: GameState, fan: Fan, px: nu
 }
 
 /**
- * An engine's hose connections, halfway down each long side: a red 1¾″ coupling
- * toward the front and a blue 2½″ one toward the back. Greyed out when that
- * line is in use; outlined when the selected firefighter can take it.
+ * An engine's hose connections: halfway down each long side a red 1¾″ coupling
+ * toward the front and a blue 2½″ one toward the back, and a yellow 5″ supply
+ * coupling on the rear. Greyed out when in use; outlined when the selected
+ * firefighter can take that line.
  */
 function drawCouplings(g: CanvasRenderingContext2D, state: GameState, truck: Truck, rect: ViewRect, view: ViewState): void {
   const S = TILE;
@@ -837,5 +856,34 @@ function drawCouplings(g: CanvasRenderingContext2D, state: GameState, truck: Tru
       }
       g.lineWidth = 1;
     }
+  }
+
+  // The 5″ supply coupling, centred on the back of the truck.
+  const rear = supplyTiles(truck);
+  if (rear.length) {
+    const backward = truck.reversed ? -1 : 1;
+    const mx = rear.reduce((n, p) => n + (p.x - rect.x0) * S + S / 2, 0) / rear.length;
+    const my = rear.reduce((n, p) => n + (p.y - rect.y0) * S + S / 2, 0) / rear.length;
+    const cx = mx + (truck.orientation === 'h' ? backward * (S / 4) : 0);
+    const cy = my + (truck.orientation === 'v' ? backward * (S / 4) : 0);
+    const inUse = state.hoses.some((l) => l.truckId === truck.id && l.kind === 'supply');
+    roundRect(g, cx - 10, cy - 10, 20, 20, 4, '#37474f');
+    g.fillStyle = inUse ? '#616161' : HOSE_COLOR['5'];
+    g.beginPath();
+    g.arc(cx, cy, 7, 0, Math.PI * 2);
+    g.fill();
+    g.strokeStyle = '#cfd8dc';
+    g.lineWidth = 1.5;
+    g.stroke();
+    const reachable =
+      !!sel && !sel.aboard && !sel.line && sel.pos.floor === 0 && rear.some((p) => Math.abs(sel.pos.x - p.x) + Math.abs(sel.pos.y - p.y) === 1);
+    if (reachable && !inUse) {
+      g.strokeStyle = `rgba(255,255,255,${0.6 + 0.4 * Math.sin(view.time / 200)})`;
+      g.lineWidth = 2;
+      g.beginPath();
+      g.arc(cx, cy, 11, 0, Math.PI * 2);
+      g.stroke();
+    }
+    g.lineWidth = 1;
   }
 }
