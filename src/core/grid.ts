@@ -58,6 +58,7 @@ export function isWalkable(t: Tile): boolean {
     case 'floor':
     case 'stairs':
     case 'rubble':
+    case 'roof':
       return true;
     case 'door':
     case 'window':
@@ -80,9 +81,14 @@ export function isOpenAir(t: Tile): boolean {
   }
 }
 
-/** Outside tiles: heat and smoke dissipate here. */
+/** Outside tiles (including the roof and roof vents): heat and smoke dissipate here. */
 export function isOutside(t: Tile): boolean {
-  return t.kind === 'ground' || t.kind === 'air';
+  return t.kind === 'ground' || t.kind === 'air' || t.kind === 'roof' || t.kind === 'vent';
+}
+
+/** Hot gas and smoke can rise straight from `below` into `above`: a stairwell, a collapsed floor or a roof vent. */
+export function isShaft(below: Tile, above: Tile): boolean {
+  return above.kind === 'hole' || above.kind === 'vent' || (above.kind === 'stairs' && below.kind === 'stairs');
 }
 
 export function forEachTile(state: GameState, fn: (t: Tile, p: Pos) => void): void {

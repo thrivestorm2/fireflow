@@ -8,7 +8,7 @@ import { miniScenario, standAt } from './helpers';
 describe('game flow', () => {
   it('builds the house scenario with the outside, trucks and hydrants', () => {
     const s = newGame(houseFire);
-    expect(s.floors).toHaveLength(2);
+    expect(s.floors).toHaveLength(3); // ground, upper floor, roof
     expect(s.trucks.map((t) => t.status)).toEqual(['staged', 'enroute', 'enroute']);
     expect(s.units.filter((u) => u.kind === 'firefighter').every((u) => u.aboard)).toBe(true);
     expect(s.hydrants).toHaveLength(2);

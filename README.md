@@ -12,14 +12,17 @@ npm run build      # static build in dist/
 
 ## The grid
 
-Each floor is a grid of equal square tiles. Upper floors are shown above the ground floor, as a cutaway.
-The ground floor includes the outside: yard, trees, sidewalk, road, driveway and fire hydrants.
+Each level is a grid of equal square tiles: the ground floor, the upper floor, and a walkable roof.
+Upper levels are shown side by side above the ground floor, as a cutaway. The ground floor includes
+the outside: yard, trees, sidewalk, road, driveway and fire hydrants. Roads are 2 tiles wide for one
+lane, or at least 4 tiles wide for two lanes (the street here is 4 wide; the driveway is one 2-wide
+lane).
 Every tile has:
 
 | Property | Examples |
 |---|---|
-| **Kind** (structural role) | floor, wall, door, window, stairs, ground, air, hole, rubble |
-| **Material** (what it's made of) | concrete, asphalt, grass, brick, drywall, wood, carpet, ceramic tile, glass, air |
+| **Kind** (structural role) | floor, wall, door (open / closed / locked), window, stairs, roof, roof vent, ground, air, hole, rubble |
+| **Material** (what it's made of) | concrete, asphalt, grass, brick, drywall, wood, carpet, ceramic tile, glass, roof shingles, air |
 | **Contents** (what's on it) | sofa, bed, table, cabinets, stove, bookshelf, plant, tree, hydrant |
 | **Temperature** | in °C; ambient is 20 °C, a fully involved tile reaches 800 °C |
 | **Condition** | fire intensity (0–3), smoke, wet, burnt, structural integrity |
@@ -54,12 +57,43 @@ it: click *Park* and pick a road or driveway tile (R or right-click rotates it).
 
 | Truck | Size | Water tank | Hose | Crew |
 |---|---|---|---|---|
-| Engine | 2 × 5 tiles | 20 units | 28 tiles | engine crew (yellow), 4 AP |
-| Ladder | 2 × 7 tiles | — | — | ladder crew (orange), 5 AP, ground ladders |
+| Engine | 2 × 5 tiles | 20 units | 28 tiles | engine crew (yellow), 4 AP: hoses and hydrants |
+| Ladder | 2 × 7 tiles | — | — | ladder crew (orange), 5 AP: forcible entry, ventilation, ladders, 1 fan |
 
 The crew starts aboard. Select a crew member and click a tile next to the truck to get them off. Units
 take up a tile each: they can pass through teammates but can't stop on an occupied tile. Movement and
 actions share the firefighter's AP for the turn.
+
+## Ladder crews: forcible entry and ventilation
+
+Only ladder crews can do these jobs. In the **Tools** mode, the target decides the job:
+
+- **Force a locked door** (2 AP). The house's front door is locked. Engine crews can't open it.
+- **Axe** through a drywall wall (2 AP), a door or a window (1 AP).
+- **Raise a ground ladder** (2 AP) standing outside against the building. It reaches each level
+  above whose wall it leans on: upper-floor windows and the roof edge.
+- **Cut a roof vent** (3 AP) through an adjacent roof tile, while standing on the roof. A vent draws
+  30% of the smoke and some of the heat out of the whole connected space below it, every turn. A fire
+  right under an opening gets more air, though. Fire can also burn through a weakened roof by itself.
+- **Place a fan** (2 AP) beside an open door or window. It blows through the opening into the
+  building, and its truck carries one. With another opening for the air to leave by (an open window,
+  door or roof vent), it clears 75% of the smoke in its path each turn. Sealed, it only clears 15%.
+  **If anything in its path is still burning, the fan feeds it:** the fire grows and heat is pushed
+  into neighbouring tiles. Knock the fire down first, then ventilate. A fan can be shut down (1 AP)
+  and goes back on its truck.
+
+Anyone can open and close unlocked doors and windows, which is the simplest ventilation of all.
+
+## Smoke and search
+
+- **Victims are hidden** until found. After every action, each firefighter sees up to 3 tiles through
+  clear air (smoke below 30%) and finds anyone there. Smoke blocks sight.
+- In smoke, crews **search** by hand: the Search action covers their tile and the 8 around it
+  (1 AP, or 2 AP in thick smoke). Walking over an unseen victim also finds them. A small green mark
+  shows searched tiles.
+- **Smoke slows fire attack:** spraying from a smoky tile (30%+) costs +1 AP, and from thick smoke
+  (60%+) +2 AP. Thick smoke also cuts the spray range from 3 to 2. Moving through thick smoke costs
+  +1 AP per tile.
 
 ## Water and hoses
 
@@ -88,9 +122,11 @@ actions share the firefighter's AP for the turn.
 | Hydrant | 1 / 2 / 2 | Remove cap, couple, open — see above. |
 | Spray | 1 | Holding an attack line. Straight line, up to 3 tiles, unobstructed. −2 fire, −320 °C, leaves the tile wet for 2 turns. Uses 1 water from the engine. |
 | Door | 1 | Open or close an adjacent door or window. |
-| Axe | 1–2 | Breach an adjacent door, window or drywall wall (2 AP). Brick is too solid. |
 | Carry / Put down | 1 / 0 | Pick up an adjacent civilian (hands must be free of hose). Carrying them to any outside tile rescues them. |
-| Ladder | 2 | Ladder crew, standing outside directly below an upper-floor window. |
+| Search | 1–2 | Your tile and the 8 around it; 2 AP in thick smoke. |
+| Tools (ladder crew) | 1–3 | Force door 2, axe 1–2, cut roof 3. |
+| Ladder (ladder crew) | 2 | Standing outside against the building. |
+| Place / remove fan | 2 / 1 | Ladder crew places; anyone beside it removes. |
 
 You **win** when no fire remains. Civilians still inside then walk out. You **lose** if every
 firefighter goes down. Your score counts rescues, losses, how much of the structure you saved, and
@@ -103,7 +139,7 @@ does the obvious thing: pick up an adjacent civilian, spray a burning tile in ra
 closed door, or walk to the tile by the shortest path (stairs and ladders included). Explicit modes:
 **1** Auto, **2** Move, **3** Spray, **4** Door, **5** Axe, **6** Carry. **Enter** ends the turn,
 **Z** undoes within the turn, **A** / **S** take an attack / supply line, **N** picks up or puts
-down a hose, **B** packs a hose, **Y** works an adjacent hydrant, **G** puts a person down, **L**
+down a hose, **B** packs a hose, **Y** works an adjacent hydrant, **G** puts a person down, **E** searches, **P** places or removes a fan, **L**
 raises a ladder, **R** rotates a truck being parked, **H**/**V** toggle the heat/smoke overlays, **Esc** cancels. Hover a tile to inspect
 its material, contents, condition and temperature. Dashed orange borders mark tiles close to igniting.
 
@@ -116,6 +152,8 @@ src/core/       pure, deterministic game logic (no DOM)
   building.ts     floor-plan + contents parser, Scenario and dispatch definitions
   trucks.ts       truck footprints and parking rules
   hoses.ts        hose lines, hydrant states, and the water system (hydrant → engine refill)
+  ventilation.ts  fans: the space they pressurise, exhaust openings, smoke clearing, feeding fire
+  search.ts       sight through clear air, hands-on search, finding victims
   systems.ts      SimSystem interface — one step of the environment
   fire.ts smoke.ts structure.ts exposure.ts   the environment systems
   actions.ts      player actions: validation (actionCost) and application (performAction)

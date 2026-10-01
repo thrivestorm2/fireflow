@@ -14,7 +14,9 @@ export type TileKind =
   | 'window'
   | 'stairs'
   | 'hole' // a floor that has collapsed
-  | 'rubble'; // a wall/door that has collapsed or been breached
+  | 'rubble' // a wall/door that has collapsed or been breached
+  | 'roof' // walkable roof surface over the top floor
+  | 'vent'; // a hole cut or burned through the roof, open to the sky
 
 /** What the tile itself is made of. */
 export type Material =
@@ -28,6 +30,7 @@ export type Material =
   | 'carpet'
   | 'ceramic'
   | 'glass'
+  | 'shingle'
   | 'debris';
 
 /** What is on the tile. */
@@ -69,6 +72,10 @@ export interface Tile {
   open: boolean;
   /** Windows that shattered (or were broken) cannot be closed again. */
   broken: boolean;
+  /** Locked doors must be forced open by a ladder crew. */
+  locked: boolean;
+  /** A firefighter has looked here for victims. */
+  searched: boolean;
   /** Trucks can park here (road, driveway). */
   drivable: boolean;
   /** A ground ladder stands here, linking this tile to the same tile on the floor above/below. */
@@ -107,6 +114,8 @@ export interface Unit {
   carrying?: string;
   /** Civilian: id of the firefighter carrying them. */
   carriedBy?: string;
+  /** Civilian: located by the crew. Victims are hidden until found. */
+  found?: boolean;
 }
 
 export type TruckType = 'engine' | 'ladder';
@@ -128,6 +137,18 @@ export interface Truck {
   maxWater: number;
   /** Tiles of hose carried. Lines stretched from this truck use it up. */
   hose: number;
+  /** Ventilation fans still on the truck. */
+  fans: number;
+}
+
+/** A positive-pressure fan blowing through an opening (door or window) into the building. */
+export interface Fan {
+  id: string;
+  truckId: string;
+  /** Where the fan stands. */
+  pos: Pos;
+  /** The door or window it blows through. */
+  target: Pos;
 }
 
 export type HoseKind = 'attack' | 'supply';
@@ -170,7 +191,8 @@ export interface GameState {
   trucks: Truck[];
   hoses: HoseLine[];
   hydrants: Hydrant[];
-  /** Counter for hose line ids. */
+  fans: Fan[];
+  /** Counter for hose line and fan ids. */
   nextLineId: number;
   turn: number;
   status: GameStatus;

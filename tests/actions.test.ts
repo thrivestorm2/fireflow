@@ -261,16 +261,17 @@ describe('player actions', () => {
     expect(performAction(s, { type: 'pickup', unitId: 'ff1', target: P(2, 4) }).error).toMatch(/hose down/);
   });
 
-  it('breaches drywall but not brick', () => {
-    let s = standAt(staged(), 'ff1', 2, 5);
-    expect(performAction(s, { type: 'breach', unitId: 'ff1', target: P(1, 5) }).error).toMatch(/solid/);
-    s = run(s, { type: 'breach', unitId: 'ff1', target: P(3, 5) });
+  it('ladder crews breach drywall but not brick', () => {
+    let s = standAt(staged(), 'ff3', 2, 5);
+    expect(performAction(standAt(structuredClone(s), 'ff1', 2, 5), { type: 'breach', unitId: 'ff1', target: P(3, 5) }).error).toMatch(/Only ladder crews/);
+    expect(performAction(s, { type: 'breach', unitId: 'ff3', target: P(1, 5) }).error).toMatch(/solid/);
+    s = run(s, { type: 'breach', unitId: 'ff3', target: P(3, 5) });
     expect(s.floors[0][5][3].kind).toBe('rubble');
   });
 
   it('ladder crews raise ladders to upper windows and climb them', () => {
     let s = standAt(staged(), 'ff3', 6, 2);
-    expect(performAction(standAt(structuredClone(s), 'ff1', 4, 2), { type: 'ladder', unitId: 'ff1' }).error).toMatch(/ladder crews/);
+    expect(performAction(standAt(structuredClone(s), 'ff1', 4, 2), { type: 'ladder', unitId: 'ff1' }).error).toMatch(/Only ladder crews/);
     s = run(s, { type: 'ladder', unitId: 'ff3' });
     expect(s.floors[0][2][6].ladder && s.floors[1][2][6].ladder).toBe(true);
     s = run(s, move('ff3', P(6, 2, 1)), { type: 'breach', unitId: 'ff3', target: P(6, 3, 1) });

@@ -21,6 +21,7 @@ export const MATERIALS: Record<Material, MaterialProps> = {
   glass: { label: 'Glass', ignition: Infinity, fuel: 0, burnDamage: 0 },
   ceramic: { label: 'Ceramic tile', ignition: Infinity, fuel: 0, burnDamage: 3 },
   debris: { label: 'Debris', ignition: Infinity, fuel: 0, burnDamage: 0 },
+  shingle: { label: 'Shingles over wood decking', ignition: 400, fuel: 8, burnDamage: 6 },
   drywall: { label: 'Drywall', ignition: 580, fuel: 6, burnDamage: 9 },
   wood: { label: 'Wood', ignition: 420, fuel: 12, burnDamage: 5 },
   carpet: { label: 'Carpet over wood', ignition: 340, fuel: 8, burnDamage: 4 },

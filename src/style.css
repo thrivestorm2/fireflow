@@ -61,6 +61,7 @@ button.primary:hover:not(:disabled) { background: #c4461a; }
 }
 
 .floors { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.upper-floors { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; }
 .floor h3 {
   margin: 0 0 6px;
   font-size: 13px;

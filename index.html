@@ -38,10 +38,12 @@
             <button id="pack">Pack hose</button>
             <button id="hydrant">Hydrant</button>
           </div>
-          <h2 class="sub">Rescue</h2>
+          <h2 class="sub">Search, rescue &amp; ventilation</h2>
           <div class="modes">
+            <button id="search">Search</button>
             <button id="drop">Put down</button>
             <button id="ladder">Raise ladder</button>
+            <button id="fan">Place fan</button>
           </div>
           <p id="hint" class="hint"></p>
         </div>
@@ -65,8 +67,11 @@
             <li>One person per tile. Movement and actions share the firefighter's AP for the turn. Furniture costs extra to climb over; cabinets, shelves and trees block.</li>
             <li><b>Engine crews</b> (yellow) have 4 AP. Spray reaches 3 tiles in a straight, unobstructed line. <b>Ladder crews</b> (orange) have 5 AP and can raise a ladder below an upper-floor window. Their truck carries no water or hose.</li>
             <li>Closed doors hold fire back. Heat rises: fire below weakens the floor above and climbs the stairwell. Dashed orange borders mark tiles close to igniting.</li>
-            <li>Carry civilians outside. Smoke and heat hurt them every turn.</li>
-            <li>Keys: 1–6 modes, Tab next firefighter, Enter end turn, Z undo, A attack line, S supply line, N pick up/put down hose, B pack hose, Y hydrant, G put person down, L ladder, R rotate truck, H/V overlays, Esc cancel.</li>
+            <li><b>Victims are hidden</b> until found. Firefighters spot anyone within 3 tiles through clear air. Smoke blinds them, so search tile by tile (<b>Search</b>, 1 AP, or 2 AP in thick smoke). A small green mark shows searched tiles. Carry victims outside; smoke and heat hurt them every turn.</li>
+            <li><b>Smoke slows everything.</b> Moving through thick smoke costs +1 AP. Spraying from smoke costs +1 AP, or +2 in thick smoke, where the range also drops to 2.</li>
+            <li><b>Ladder crews</b> do forcible entry and ventilation. Use the <b>Tools</b> mode to force a locked door (2 AP), axe through drywall, a door or a window, or cut a roof vent (3 AP, while on the roof). Ground ladders reach upper windows and the roof.</li>
+            <li><b>Ventilation:</b> open windows let smoke out, and a roof vent pulls smoke and heat out of the whole space below it. A <b>fan</b> set at an open door blows the smoke out through another opening. But if anything in its path is still burning, the fan feeds the fire. Knock the fire down first.</li>
+            <li>Keys: 1–6 modes, Tab next firefighter, Enter end turn, Z undo, A attack line, S supply line, N pick up/put down hose, B pack hose, Y hydrant, E search, P place/remove fan, G put person down, L ladder, R rotate truck, H/V overlays, Esc cancel.</li>
           </ul>
         </details>
       </aside>

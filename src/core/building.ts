@@ -6,10 +6,11 @@ import type { Contents, CrewRole, GameState, Material, Pos, Tile, TileKind, Truc
  *   ' ' open air (upper floors)   .  grass        -  sidewalk (concrete)
  *   =  road (asphalt, drivable)   :  driveway (concrete, drivable)
  *   #  brick wall                 w  drywall wall
- *   W  window (closed)            D  door (closed)   d  door (open)
+ *   W  window (closed)            D  door (closed)   d  door (open)   L  door (locked)
  *   _  wood floor   ,  carpet   t  ceramic tile   c  concrete floor   S  stairs
+ *   R  roof
  */
-const PLAN: Record<string, { kind: TileKind; material: Material; open?: boolean; drivable?: boolean }> = {
+const PLAN: Record<string, { kind: TileKind; material: Material; open?: boolean; drivable?: boolean; locked?: boolean }> = {
   ' ': { kind: 'air', material: 'air' },
   '.': { kind: 'ground', material: 'grass' },
   '-': { kind: 'ground', material: 'concrete' },
@@ -20,6 +21,8 @@ const PLAN: Record<string, { kind: TileKind; material: Material; open?: boolean;
   W: { kind: 'window', material: 'glass' },
   D: { kind: 'door', material: 'wood' },
   d: { kind: 'door', material: 'wood', open: true },
+  L: { kind: 'door', material: 'wood', locked: true },
+  R: { kind: 'roof', material: 'shingle' },
   _: { kind: 'floor', material: 'wood' },
   ',': { kind: 'floor', material: 'carpet' },
   t: { kind: 'floor', material: 'ceramic' },
@@ -58,6 +61,8 @@ export function makeTile(kind: TileKind, material: Material, contents: Contents 
     fuel: MATERIALS[material].fuel + CONTENTS[contents].fuel,
     open: false,
     broken: false,
+    locked: false,
+    searched: false,
     drivable: false,
     ladder: false,
     ...extra,
@@ -79,7 +84,7 @@ export function parseFloor(floor: FloorPlan, width: number): Tile[][] {
       const def = PLAN[ch];
       if (!def) throw new Error(`Unknown plan symbol "${ch}" at ${x},${y}`);
       const contents = CONTENTS_KEY[floor.contents?.[y]?.[x] ?? ''] ?? 'none';
-      return makeTile(def.kind, def.material, contents, { open: !!def.open, drivable: !!def.drivable });
+      return makeTile(def.kind, def.material, contents, { open: !!def.open, drivable: !!def.drivable, locked: !!def.locked });
     });
   });
 }
@@ -109,9 +114,9 @@ export interface Scenario {
 export const CREW_AP: Record<CrewRole, number> = { engine: 4, ladder: 5 };
 
 /** What each truck type brings: size on the grid, water in the tank, tiles of hose. */
-export const TRUCK_SPECS: Record<TruckType, { length: number; width: number; water: number; hose: number }> = {
-  engine: { length: 5, width: 2, water: 20, hose: 28 },
-  ladder: { length: 7, width: 2, water: 0, hose: 0 },
+export const TRUCK_SPECS: Record<TruckType, { length: number; width: number; water: number; hose: number; fans: number }> = {
+  engine: { length: 5, width: 2, water: 20, hose: 28, fans: 0 },
+  ladder: { length: 7, width: 2, water: 0, hose: 0, fans: 1 },
 };
 
 export function createFirefighter(id: string, name: string, role: CrewRole, truck?: string, pos: Pos = { floor: 0, x: 0, y: 0 }): Unit {
@@ -120,7 +125,7 @@ export function createFirefighter(id: string, name: string, role: CrewRole, truc
 }
 
 export function createCivilian(id: string, name: string, pos: Pos): Unit {
-  return { id, name, kind: 'civilian', pos: { ...pos }, hp: 100, maxHp: 100, ap: 0, maxAp: 0, status: 'active' };
+  return { id, name, kind: 'civilian', pos: { ...pos }, hp: 100, maxHp: 100, ap: 0, maxAp: 0, status: 'active', found: false };
 }
 
 export function buildState(scenario: Scenario): GameState {
@@ -141,6 +146,7 @@ export function buildState(scenario: Scenario): GameState {
     water: TRUCK_SPECS[d.type].water,
     maxWater: TRUCK_SPECS[d.type].water,
     hose: TRUCK_SPECS[d.type].hose,
+    fans: TRUCK_SPECS[d.type].fans,
   }));
 
   let n = 0;
@@ -158,6 +164,7 @@ export function buildState(scenario: Scenario): GameState {
     trucks,
     hoses: [],
     hydrants: [],
+    fans: [],
     nextLineId: 1,
     turn: 1,
     status: 'playing',

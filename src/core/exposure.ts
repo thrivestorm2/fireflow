@@ -36,7 +36,7 @@ export const exposureSystem: SimSystem = {
         log(`${u.name} is down!`, 'bad');
       } else {
         u.status = 'dead';
-        log(`${u.name} has succumbed to the fire.`, 'bad');
+        log(u.found ? `${u.name} has succumbed to the fire.` : 'A missing resident has succumbed to the smoke.', 'bad');
       }
       releaseCarry(state, u);
     }

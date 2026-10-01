@@ -3,6 +3,8 @@ import { exposureSystem } from './exposure';
 import { fireSystem } from './fire';
 import { forEachTile } from './grid';
 import { waterSystem } from './hoses';
+import { spotVictims } from './search';
+import { fanSystem } from './ventilation';
 import { Rng } from './rng';
 import { smokeSystem } from './smoke';
 import { structureSystem } from './structure';
@@ -10,7 +12,7 @@ import type { SimContext, SimSystem } from './systems';
 import type { GameState, LogEntry } from './types';
 
 /** Environment systems, run in order at the start of every turn. */
-export const SYSTEMS: SimSystem[] = [fireSystem, smokeSystem, structureSystem, exposureSystem, waterSystem];
+export const SYSTEMS: SimSystem[] = [fireSystem, smokeSystem, fanSystem, structureSystem, exposureSystem, waterSystem];
 
 function runEnvironment(state: GameState, systems: SimSystem[] = SYSTEMS): void {
   const rng = new Rng(state.rngState);
@@ -53,6 +55,7 @@ export function endTurn(prev: GameState, systems: SimSystem[] = SYSTEMS): GameSt
   runEnvironment(state, systems);
   arriveTrucks(state);
   for (const u of state.units) if (u.status === 'active') u.ap = u.maxAp;
+  spotVictims(state, (text, tone = 'info') => state.log.push({ turn: state.turn, text, tone }));
   evaluate(state);
   return state;
 }
@@ -62,6 +65,8 @@ export interface Summary {
   rescued: number;
   dead: number;
   inside: number;
+  /** Victims still inside that nobody has found yet. */
+  missing: number;
   firefightersUp: number;
   firefightersDown: number;
   /** Percentage of combustible/structural tiles still intact (not burnt or collapsed). */
@@ -91,6 +96,7 @@ export function summarize(state: GameState): Summary {
     rescued,
     dead,
     inside: civ.filter((u) => u.status === 'active').length,
+    missing: civ.filter((u) => u.status === 'active' && !u.found).length,
     firefightersUp: ff.length - firefightersDown,
     firefightersDown,
     structureSaved,

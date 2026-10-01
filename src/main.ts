@@ -1,7 +1,7 @@
 import { actionCost, performAction, type Action } from './core/actions';
 import { exposureDamage } from './core/exposure';
 import { endTurn, newGame, summarize } from './core/game';
-import { conditions, isAdjacent, tileAt } from './core/grid';
+import { conditions, isAdjacent, neighbors, tileAt } from './core/grid';
 import { CONTENTS, ignitionOf, MATERIALS } from './core/materials';
 import { reachable } from './core/pathing';
 import { HYDRANT_LABEL, HYDRANT_STEPS, hoseLeft, hydrantAt, linesThrough, supplyFor } from './core/hoses';
@@ -49,7 +49,10 @@ function buildFloors(): void {
   root.innerHTML = '';
   canvases.length = 0;
   rects = state.floors.map((_, f) => viewRect(state, f));
-  // Top floor first, so the page reads like a cutaway of the building.
+  // Upper levels (roof first) side by side above the ground floor, like a cutaway of the building.
+  const upper = document.createElement('div');
+  upper.className = 'upper-floors';
+  root.append(upper);
   for (let f = state.floors.length - 1; f >= 0; f--) {
     const wrap = document.createElement('div');
     wrap.className = 'floor';
@@ -77,7 +80,7 @@ function buildFloors(): void {
     });
     canvases[f] = canvas;
     wrap.append(h, canvas);
-    root.append(wrap);
+    (f === 0 ? root : upper).append(wrap);
   }
   layout();
 }
@@ -86,10 +89,13 @@ function buildFloors(): void {
 function layout(): void {
   const root = $('floors');
   const width = root.clientWidth;
-  const totalRows = rects.reduce((n, r) => n + r.rows, 0);
-  const maxCols = Math.max(...rects.map((r) => r.cols));
-  const available = window.innerHeight - 70 - rects.length * 34;
-  const tile = Math.max(16, Math.min(40, Math.floor(Math.min(width / maxCols, available / totalRows))));
+  const upper = rects.slice(1);
+  const upperCols = upper.reduce((n, r) => n + r.cols, 0);
+  const upperRows = Math.max(0, ...upper.map((r) => r.rows));
+  const gaps = 14 * Math.max(0, upper.length - 1);
+  const maxCols = Math.max(rects[0].cols, upperCols);
+  const available = window.innerHeight - 70 - 2 * 34;
+  const tile = Math.max(14, Math.min(40, Math.floor(Math.min((width - gaps) / maxCols, available / (rects[0].rows + upperRows)))));
   canvases.forEach((c, f) => {
     c.style.width = `${rects[f].cols * tile}px`;
     c.style.height = `${rects[f].rows * tile}px`;
@@ -228,14 +234,26 @@ function setMode(m: Mode): void {
   setHintAndRender(MODES.find((x) => x.mode === m)!.hint);
 }
 
-type UnitButton = 'drop' | 'attack' | 'supply' | 'nozzle' | 'pack' | 'hydrant' | 'ladder';
+type UnitButton = 'drop' | 'attack' | 'supply' | 'nozzle' | 'pack' | 'hydrant' | 'ladder' | 'search' | 'fan';
+const UNIT_BUTTONS: UnitButton[] = ['drop', 'attack', 'supply', 'nozzle', 'pack', 'hydrant', 'ladder', 'search', 'fan'];
 
 /** The action behind each side-panel button, for the selected firefighter. */
 function buttonAction(kind: UnitButton, u: Unit): Action | undefined {
   switch (kind) {
     case 'drop':
     case 'ladder':
+    case 'search':
       return { type: kind, unitId: u.id };
+    case 'fan': {
+      // Shut down a fan next to you, or set one up at an adjacent open door/window.
+      const near = state.fans.find((f) => f.pos.floor === u.pos.floor && Math.abs(f.pos.x - u.pos.x) + Math.abs(f.pos.y - u.pos.y) <= 1);
+      if (near) return { type: 'removeFan', unitId: u.id, target: near.pos };
+      const opening = neighbors(state, u.pos).find((p) => {
+        const t = tileAt(state, p)!;
+        return (t.kind === 'door' || t.kind === 'window') && t.open;
+      });
+      return opening && { type: 'placeFan', unitId: u.id, target: opening };
+    }
     case 'attack':
     case 'supply':
       return { type: 'takeLine', unitId: u.id, kind };
@@ -254,7 +272,7 @@ function unitAction(kind: UnitButton): void {
   const u = selected();
   const a = u && buttonAction(kind, u);
   if (!u) return setHintAndRender('Select a firefighter first.', true);
-  if (!a) return setHintAndRender('Stand next to a hydrant first.', true);
+  if (!a) return setHintAndRender(kind === 'fan' ? 'Stand beside an open door or window first.' : 'Stand next to a hydrant first.', true);
   commit([a]);
 }
 
@@ -268,6 +286,7 @@ function renderSummary(): void {
     ['Burning tiles', s.burning],
     ['Structure intact', `${s.structureSaved}%`],
     ['Civilians inside', s.inside],
+    ['  not yet found', s.missing],
     ['Rescued', s.rescued],
     ['Lost', s.dead],
     ['Crew down', s.firefightersDown],
@@ -369,13 +388,14 @@ function renderModes(): void {
     ov.append(b);
   }
   const sel = selected();
-  for (const kind of ['drop', 'attack', 'supply', 'nozzle', 'pack', 'hydrant', 'ladder'] as UnitButton[]) {
+  for (const kind of UNIT_BUTTONS) {
     const btn = $(kind) as HTMLButtonElement;
     const a = sel && buttonAction(kind, sel);
     const cost = a ? actionCost(state, a) : 'Select a firefighter';
     btn.disabled = typeof cost !== 'number';
     btn.title = `${btn.dataset.label}${typeof cost === 'number' ? ` — ${cost} AP` : ` — ${cost}`}`;
     if (kind === 'nozzle') btn.textContent = sel?.line ? 'Put hose down' : 'Pick up hose';
+    if (kind === 'fan') btn.textContent = a?.type === 'removeFan' ? 'Remove fan' : 'Place fan';
     if (kind === 'hydrant') {
       const h = sel && state.hydrants.find((h) => isAdjacent(h.pos, sel.pos));
       btn.textContent = h ? (HYDRANT_STEPS[h.state]?.label ?? 'Hydrant') : 'Hydrant';
@@ -396,9 +416,17 @@ function renderInspector(): void {
   const kind = t.kind === 'door' || t.kind === 'window' ? `${t.broken ? 'broken' : t.open ? 'open' : 'closed'} ${t.kind}` : t.kind;
   const ign = ignitionOf(t.material, t.contents);
   const people = state.units
-    .filter((u) => u.status === 'active' && !u.aboard && u.pos.floor === hover!.floor && u.pos.x === hover!.x && u.pos.y === hover!.y)
+    .filter((u) => u.status === 'active' && !u.aboard && (u.kind === 'firefighter' || u.found) && u.pos.floor === hover!.floor && u.pos.x === hover!.x && u.pos.y === hover!.y)
     .map((u) => `${u.name} (${u.hp} HP, −${exposureDamage(state, u)}/turn)`);
-  const extras = [t.drivable ? 'drivable' : '', t.ladder ? 'ladder' : ''].filter(Boolean).join(', ');
+  const extras = [
+    t.drivable ? 'drivable' : '',
+    t.ladder ? 'ladder' : '',
+    t.locked ? 'locked' : '',
+    t.searched ? 'searched' : '',
+    state.fans.some((f) => f.pos.floor === hover!.floor && f.pos.x === hover!.x && f.pos.y === hover!.y) ? 'fan' : '',
+  ]
+    .filter(Boolean)
+    .join(', ');
   el.innerHTML = `
     <dl>
       <dt>Tile</dt><dd>${kind}${extras ? ` (${extras})` : ''}</dd>
@@ -412,6 +440,12 @@ function renderInspector(): void {
       ${hoseInfo(hover)}
       ${people.length ? `<dt>People</dt><dd>${people.join(', ')}</dd>` : ''}
     </dl>`;
+}
+
+function levelName(f: number): string {
+  if (f === 0) return 'Ground floor & street';
+  const isRoof = state.floors[f].flat().every((t) => t.kind === 'air' || t.kind === 'roof' || t.kind === 'vent');
+  return isRoof ? 'Roof' : `Floor ${f + 1}`;
 }
 
 function hydrantInfo(p: Pos): string {
@@ -457,7 +491,7 @@ function renderModal(): void {
 function renderFloorLabels(): void {
   state.floors.forEach((rows, f) => {
     const burning = rows.flat().filter((t) => t.fire > 0).length;
-    const name = f === 0 ? 'Ground floor & street' : `Floor ${f + 1}`;
+    const name = levelName(f);
     $(`floor-label-${f}`).innerHTML = `<span>${name}</span>${burning ? `<span class="fire-count">🔥 ${burning}</span>` : ''}`;
   });
 }
@@ -516,7 +550,7 @@ function restart(): void {
 
 $('end-turn').addEventListener('click', doEndTurn);
 $('undo').addEventListener('click', undo);
-for (const kind of ['drop', 'attack', 'supply', 'nozzle', 'pack', 'hydrant', 'ladder'] as UnitButton[]) {
+for (const kind of UNIT_BUTTONS) {
   const btn = $(kind);
   btn.dataset.label = btn.textContent ?? kind;
   btn.addEventListener('click', () => unitAction(kind));
@@ -552,6 +586,10 @@ window.addEventListener('keydown', (e) => {
       return unitAction('hydrant');
     case 'l':
       return unitAction('ladder');
+    case 'e':
+      return unitAction('search');
+    case 'p':
+      return unitAction('fan');
     case 'h':
       overlay = overlay === 'heat' ? 'normal' : 'heat';
       return render();

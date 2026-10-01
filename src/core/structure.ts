@@ -16,12 +16,15 @@ export const STRUCTURE = {
 
 /** Whether fire on this tile eats into its structural integrity. */
 export function isLoadBearing(t: Tile, floor: number): boolean {
-  if (t.kind === 'wall' || t.kind === 'door') return true;
+  if (t.kind === 'wall' || t.kind === 'door' || t.kind === 'roof') return true;
   return (t.kind === 'floor' || t.kind === 'stairs') && floor > 0; // the ground floor sits on a slab
 }
 
 function canCollapse(t: Tile, floor: number): boolean {
-  return t.integrity <= 0 && (t.kind === 'wall' || t.kind === 'door' || t.kind === 'window' || ((t.kind === 'floor' || t.kind === 'stairs') && floor > 0));
+  return (
+    t.integrity <= 0 &&
+    (t.kind === 'wall' || t.kind === 'door' || t.kind === 'window' || t.kind === 'roof' || ((t.kind === 'floor' || t.kind === 'stairs') && floor > 0))
+  );
 }
 
 /** Fire damages walls and floors; anything reduced to 0 integrity collapses. */
@@ -35,7 +38,7 @@ export const structureSystem: SimSystem = {
           if (t.fire <= 0) return;
           if (isLoadBearing(t, f)) t.integrity -= t.fire * MATERIALS[t.material].burnDamage;
           const above = floors[f + 1]?.[y][x];
-          if (above && (above.kind === 'floor' || above.kind === 'stairs')) {
+          if (above && (above.kind === 'floor' || above.kind === 'stairs' || above.kind === 'roof')) {
             above.integrity -= t.fire * STRUCTURE.ceilingDamage;
           }
         }),
@@ -64,7 +67,11 @@ export function collapse(ctx: SimContext, p: Pos): void {
   const t = tileAt(state, p)!;
   const above = tileAt(state, { ...p, floor: p.floor + 1 });
 
-  if (t.kind === 'floor' || t.kind === 'stairs') {
+  if (t.kind === 'roof') {
+    Object.assign(t, { kind: 'vent', material: 'air', contents: 'none', fuel: 0, fire: 0, integrity: 0 });
+    log('The roof burns through!', 'bad');
+    dropUnits(state, p, log);
+  } else if (t.kind === 'floor' || t.kind === 'stairs') {
     const below = tileAt(state, { ...p, floor: p.floor - 1 });
     if (below) {
       below.temperature += STRUCTURE.debrisHeat;

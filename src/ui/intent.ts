@@ -11,7 +11,7 @@ export const MODES: { mode: Mode; label: string; key: string; hint: string }[] =
   { mode: 'move', label: 'Move', key: '2', hint: 'Walk to a tile (stairs connect floors)' },
   { mode: 'spray', label: 'Spray', key: '3', hint: 'With an attack line: hose a tile up to 3 away in a straight line' },
   { mode: 'door', label: 'Door', key: '4', hint: 'Open or close an adjacent door or window' },
-  { mode: 'axe', label: 'Axe', key: '5', hint: 'Breach an adjacent drywall wall, door or window' },
+  { mode: 'axe', label: 'Tools', key: '5', hint: 'Ladder crews: force a locked door, axe a wall, door or window, or cut a roof vent (on the roof)' },
   { mode: 'carry', label: 'Carry', key: '6', hint: 'Pick up an adjacent civilian (click yourself to drop)' },
 ];
 
@@ -44,6 +44,8 @@ export function planClick(state: GameState, unit: Unit, target: Pos, mode: Mode)
     case 'door':
       return single({ type: 'toggle', unitId: id, target });
     case 'axe':
+      if (t.kind === 'door' && t.locked) return single({ type: 'force', unitId: id, target });
+      if (t.kind === 'roof') return single({ type: 'cutRoof', unitId: id, target });
       return single({ type: 'breach', unitId: id, target });
     case 'carry':
       if (unit.carrying && samePos(unit.pos, target)) return single({ type: 'drop', unitId: id });
@@ -58,6 +60,7 @@ export function planClick(state: GameState, unit: Unit, target: Pos, mode: Mode)
       const nozzle = state.hoses.some((l) => l.id === unit.line && l.kind === 'attack');
       if (t.fire > 0 && nozzle && !canSprayFrom(state, unit.pos, target)) return single({ type: 'spray', unitId: id, target });
       if ((t.kind === 'door' || t.kind === 'window') && !t.open && isAdjacent(unit.pos, target)) {
+        if (t.locked && unit.role === 'ladder') return single({ type: 'force', unitId: id, target });
         return single({ type: 'toggle', unitId: id, target });
       }
       return move();

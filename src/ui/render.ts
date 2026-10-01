@@ -2,7 +2,8 @@ import { canSprayFrom } from '../core/actions';
 import { AMBIENT, ignitionOf } from '../core/materials';
 import { hydrantAt } from '../core/hoses';
 import { footprint, truckTiles } from '../core/trucks';
-import type { GameState, HoseLine, Orientation, Pos, Tile, Truck, Unit } from '../core/types';
+import type { Fan, GameState, HoseLine, Orientation, Pos, Tile, Truck, Unit } from '../core/types';
+import { fanRunning } from '../core/ventilation';
 
 /** Internal pixel size of a tile; canvases are scaled with CSS. */
 export const TILE = 32;
@@ -59,6 +60,7 @@ const MATERIAL_COLOR: Record<string, string> = {
   ceramic: '#d4d2c8',
   glass: '#7fb2d0',
   debris: '#5c5853',
+  shingle: '#5b4d48',
 };
 
 function darken(hex: string, f: number): string {
@@ -146,7 +148,39 @@ function drawBase(g: CanvasRenderingContext2D, t: Tile, px: number, py: number, 
         g.fillRect(px + 3, py + 3, S - 6, S - 6);
         g.fillStyle = '#e0c060';
         g.fillRect(px + S - 10, py + S / 2 - 2, 3, 4);
+        if (t.locked) {
+          // Padlock
+          g.strokeStyle = '#e0e0e0';
+          g.lineWidth = 2;
+          g.beginPath();
+          g.arc(px + S / 2, py + 12, 4, Math.PI, 0);
+          g.stroke();
+          g.lineWidth = 1;
+          g.fillStyle = '#e0e0e0';
+          g.fillRect(px + S / 2 - 6, py + 12, 12, 9);
+        }
       }
+      break;
+    case 'roof':
+      g.strokeStyle = 'rgba(0,0,0,0.3)';
+      g.beginPath();
+      for (let i = 0; i < 4; i++) {
+        g.moveTo(px, py + i * 8 + 7.5);
+        g.lineTo(px + S, py + i * 8 + 7.5);
+        for (let c = i % 2 ? 0 : 5; c < S; c += 10) {
+          g.moveTo(px + c + 0.5, py + i * 8);
+          g.lineTo(px + c + 0.5, py + i * 8 + 8);
+        }
+      }
+      g.stroke();
+      break;
+    case 'vent':
+      g.fillStyle = '#0a0a0a';
+      g.fillRect(px + 3, py + 3, S - 6, S - 6);
+      g.strokeStyle = '#d4a017';
+      g.lineWidth = 2;
+      g.strokeRect(px + 3, py + 3, S - 6, S - 6);
+      g.lineWidth = 1;
       break;
     case 'window':
       if (t.open) {
@@ -511,10 +545,22 @@ export function drawFloor(g: CanvasRenderingContext2D, state: GameState, floor: 
       drawBase(g, t, px(x), py(y), x, y);
       if (t.contents !== 'tree') drawContents(g, t, px(x), py(y));
       if (t.contents === 'hydrant') drawHydrantState(g, state, { floor, x, y }, px(x), py(y), view.time);
-      // Centre line between two lanes of road.
-      if (t.material === 'asphalt' && state.floors[floor][y + 1]?.[x]?.material === 'asphalt' && state.floors[floor][y - 1]?.[x]?.material !== 'asphalt') {
-        g.fillStyle = '#e8c547';
-        g.fillRect(px(x) + 4, py(y) + S - 1, S / 2, 2);
+      // Centre line between the two lanes of a road at least four tiles wide.
+      if (t.material === 'asphalt') {
+        const col = state.floors[floor];
+        let above = 0;
+        let below = 0;
+        while (col[y - above - 1]?.[x]?.material === 'asphalt') above++;
+        while (col[y + below + 1]?.[x]?.material === 'asphalt') below++;
+        const width = above + below + 1;
+        if (width >= 4 && above === width / 2 - 1) {
+          g.fillStyle = '#e8c547';
+          g.fillRect(px(x) + 4, py(y) + S - 1, S / 2, 2);
+        }
+      }
+      if (t.searched && t.fire === 0 && isWalkableish(t)) {
+        g.fillStyle = 'rgba(120,220,140,0.55)';
+        g.fillRect(px(x) + S - 6, py(y) + S - 6, 3, 3);
       }
       if (t.ladder) drawLadder(g, px(x), py(y));
       if (view.placing && t.drivable) {
@@ -578,8 +624,11 @@ export function drawFloor(g: CanvasRenderingContext2D, state: GameState, floor: 
     }
   }
 
+  for (const fan of state.fans) if (inView(fan.pos)) drawFan(g, state, fan, px(fan.pos.x), py(fan.pos.y), view.time);
+
   for (const u of state.units) {
     if (u.status === 'rescued' || u.aboard || u.carriedBy || !inView(u.pos)) continue;
+    if (u.kind === 'civilian' && !u.found) continue; // nobody has found them yet
     drawUnit(g, u, px(u.pos.x), py(u.pos.y), sel?.id === u.id);
     const carried = u.carrying && state.units.find((c) => c.id === u.carrying);
     if (carried) drawUnit(g, carried, px(u.pos.x), py(u.pos.y), false);
@@ -698,6 +747,41 @@ function drawHydrantState(g: CanvasRenderingContext2D, state: GameState, p: Pos,
     g.lineWidth = 2;
     g.beginPath();
     g.arc(px + S - 7, py + 7, 4, 0, Math.PI * 2);
+    g.stroke();
+    g.lineWidth = 1;
+  }
+}
+
+function isWalkableish(t: Tile): boolean {
+  return t.kind === 'floor' || t.kind === 'stairs' || t.kind === 'rubble';
+}
+
+/** A fan: spinning blades while it blows through an open doorway, with an arrow showing the flow. */
+function drawFan(g: CanvasRenderingContext2D, state: GameState, fan: Fan, px: number, py: number, time: number): void {
+  const S = TILE;
+  const cx = px + S / 2;
+  const cy = py + S / 2;
+  const running = fanRunning(state, fan);
+  roundRect(g, px + 4, py + 4, S - 8, S - 8, 6, '#37474f');
+  g.fillStyle = '#cfd8dc';
+  const spin = running ? time / 80 : 0;
+  for (let i = 0; i < 3; i++) {
+    const a = spin + (i * Math.PI * 2) / 3;
+    g.beginPath();
+    g.ellipse(cx + Math.cos(a) * 5, cy + Math.sin(a) * 5, 6, 3, a, 0, Math.PI * 2);
+    g.fill();
+  }
+  if (running) {
+    const dx = fan.target.x - fan.pos.x;
+    const dy = fan.target.y - fan.pos.y;
+    g.strokeStyle = '#80deea';
+    g.lineWidth = 2;
+    g.beginPath();
+    g.moveTo(cx + dx * 10, cy + dy * 10);
+    g.lineTo(cx + dx * 22, cy + dy * 22);
+    g.lineTo(cx + dx * 17 - dy * 4, cy + dy * 17 - dx * 4);
+    g.moveTo(cx + dx * 22, cy + dy * 22);
+    g.lineTo(cx + dx * 17 + dy * 4, cy + dy * 17 + dx * 4);
     g.stroke();
     g.lineWidth = 1;
   }

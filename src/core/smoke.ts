@@ -1,12 +1,21 @@
-import { DIRS, isOpenAir, isOutside } from './grid';
+import { AMBIENT } from './materials';
+import { DIRS, isOpenAir, isOutside, isShaft, posKey } from './grid';
 import { clamp } from './fire';
+import type { Tile } from './types';
 import type { SimSystem } from './systems';
 
 export const SMOKE = {
   perFireLevel: 20,
   diffusion: 0.2,
   rise: 0.35,
+  /** Smoke escapes faster through a roof vent (vertical ventilation). */
+  ventRise: 0.7,
   windowVent: 0.5,
+  /** Each roof vent draws this share of smoke (and excess heat) out of the space below it per turn. */
+  roofVentDraw: 0.3,
+  roofVentHeatDraw: 0.1,
+  /** At most this share of smoke is left in a space with several vents. */
+  minVentKept: 0.4,
   decay: 0.95,
 } as const;
 
@@ -45,9 +54,8 @@ export const smokeSystem: SimSystem = {
           }
           if (f + 1 < F) {
             const above = floors[f + 1][y][x];
-            const shaft = above.kind === 'hole' || (above.kind === 'stairs' && t.kind === 'stairs');
-            if (shaft && t.smoke > above.smoke) {
-              const flow = (t.smoke - above.smoke) * SMOKE.rise;
+            if (isShaft(t, above) && t.smoke > above.smoke) {
+              const flow = (t.smoke - above.smoke) * (above.kind === 'vent' ? SMOKE.ventRise : SMOKE.rise);
               d[f][y][x] -= flow;
               d[f + 1][y][x] += flow;
             }
@@ -70,5 +78,42 @@ export const smokeSystem: SimSystem = {
         }
       }
     }
+
+    // Vertical ventilation: a hole in the roof draws smoke and heat out of the whole space under it.
+    const kept = new Map<string, number>();
+    for (let f = 1; f < F; f++) {
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          const below = floors[f - 1][y][x];
+          if (floors[f][y][x].kind !== 'vent' || !isOpenAir(below) || isOutside(below)) continue;
+          for (const k of connectedSpace(floors, f - 1, x, y)) {
+            kept.set(k, (kept.get(k) ?? 1) * (1 - SMOKE.roofVentDraw));
+          }
+        }
+      }
+    }
+    for (const [k, factor] of kept) {
+      const [f, x, y] = k.split(',').map(Number);
+      const t = floors[f][y][x];
+      t.smoke *= Math.max(SMOKE.minVentKept, factor);
+      t.temperature = AMBIENT + (t.temperature - AMBIENT) * (1 - SMOKE.roofVentHeatDraw);
+    }
   },
 };
+
+/** Interior open space connected to (x, y) on one floor. */
+function connectedSpace(floors: Tile[][][], f: number, x: number, y: number): string[] {
+  const seen = new Set([posKey({ floor: f, x, y })]);
+  const queue = [[x, y]];
+  while (queue.length) {
+    const [cx, cy] = queue.pop()!;
+    for (const [dx, dy] of DIRS) {
+      const n = floors[f][cy + dy]?.[cx + dx];
+      const k = posKey({ floor: f, x: cx + dx, y: cy + dy });
+      if (!n || seen.has(k) || !isOpenAir(n) || isOutside(n)) continue;
+      seen.add(k);
+      queue.push([cx + dx, cy + dy]);
+    }
+  }
+  return [...seen];
+}

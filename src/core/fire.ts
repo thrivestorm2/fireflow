@@ -1,4 +1,4 @@
-import { DIRS, isOpenAir, isOutside } from './grid';
+import { DIRS, isOpenAir, isOutside, isShaft } from './grid';
 import { AMBIENT, ignitionOf } from './materials';
 import type { SimSystem } from './systems';
 import type { Tile } from './types';
@@ -32,9 +32,12 @@ export const FIRE = {
   windowBreakTemp: 450,
 } as const;
 
-function hasVent(floor: Tile[][], x: number, y: number): boolean {
+/** Fresh air reaches the tile: an opening beside it, or a vent/hole right above it. */
+function hasVent(floors: Tile[][][], f: number, x: number, y: number): boolean {
+  const above = floors[f + 1]?.[y][x];
+  if (above && (above.kind === 'vent' || above.kind === 'hole')) return true;
   return DIRS.some(([dx, dy]) => {
-    const n = floor[y + dy]?.[x + dx];
+    const n = floors[f][y + dy]?.[x + dx];
     return !!n && (isOutside(n) || n.kind === 'hole' || (n.kind === 'window' && n.open));
   });
 }
@@ -62,9 +65,7 @@ export const fireSystem: SimSystem = {
             if (floors[f][y + dy]?.[x + dx]) dHeat[f][y + dy][x + dx] += t.fire * FIRE.emitSide;
           }
           if (f + 1 < F) {
-            const above = floors[f + 1][y][x];
-            const openUp = above.kind === 'hole' || (above.kind === 'stairs' && t.kind === 'stairs');
-            dHeat[f + 1][y][x] += t.fire * (openUp ? FIRE.emitUpOpen : FIRE.emitUpCeiling);
+            dHeat[f + 1][y][x] += t.fire * (isShaft(t, floors[f + 1][y][x]) ? FIRE.emitUpOpen : FIRE.emitUpCeiling);
           }
           if (f > 0) dHeat[f - 1][y][x] += t.fire * FIRE.emitDown;
         }
@@ -86,8 +87,7 @@ export const fireSystem: SimSystem = {
           }
           if (f + 1 < F) {
             const above = floors[f + 1][y][x];
-            const shaft = above.kind === 'hole' || (above.kind === 'stairs' && a.kind === 'stairs');
-            if (shaft && a.temperature > above.temperature) {
+            if (isShaft(a, above) && a.temperature > above.temperature) {
               const flow = (a.temperature - above.temperature) * FIRE.rise;
               dHeat[f][y][x] -= flow;
               dHeat[f + 1][y][x] += flow;
@@ -129,7 +129,7 @@ export const fireSystem: SimSystem = {
           } else if (t.fire > 1 && t.fuel < t.fire * 1.5) {
             t.fire -= 1; // running out of fuel
           } else if (t.fire < 3 && t.wet === 0) {
-            const vent = hasVent(floors[f], x, y) ? FIRE.ventGrowBonus : 1;
+            const vent = hasVent(floors, f, x, y) ? FIRE.ventGrowBonus : 1;
             if (rng.chance(FIRE.growChance * vent)) t.fire += 1;
           }
         }

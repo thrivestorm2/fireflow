@@ -3,6 +3,7 @@ import { evaluate } from './game';
 import { DIRS, isAdjacent, isOpenAir, isOutside, isWalkable, neighbors, posKey, samePos, tileAt } from './grid';
 import { extendLine, HOSE, hoseLeft, HYDRANT_STEPS, hydrantAt, linesThrough } from './hoses';
 import { CONTENTS } from './materials';
+import { searchAround, searchCost, SEARCH, spotVictims } from './search';
 import { besideTruck, enginesNear, placementError, truckOccupancy, truckTiles } from './trucks';
 import type { GameState, HoseKind, HoseLine, LogEntry, Orientation, Pos, Truck, Unit } from './types';
 
@@ -18,7 +19,12 @@ export type Action =
   | { type: 'pickupLine'; unitId: string } // pick up a hose end lying on your tile
   | { type: 'returnLine'; unitId: string } // pack the line you hold back onto its engine
   | { type: 'hydrant'; unitId: string; target: Pos } // next step of working a hydrant
-  | { type: 'ladder'; unitId: string } // raise a ground ladder to the window above
+  | { type: 'ladder'; unitId: string } // raise a ground ladder against the building
+  | { type: 'force'; unitId: string; target: Pos } // ladder crew: force a locked door
+  | { type: 'cutRoof'; unitId: string; target: Pos } // ladder crew on the roof: cut a vent hole
+  | { type: 'placeFan'; unitId: string; target: Pos } // ladder crew: set a fan blowing through an open door/window
+  | { type: 'removeFan'; unitId: string; target: Pos } // take a fan away (target = where it stands)
+  | { type: 'search'; unitId: string } // search your tile and the eight around it for victims
   | { type: 'placeTruck'; truckId: string; pos: Pos; orientation: Orientation };
 
 export const COST = {
@@ -39,10 +45,19 @@ export const COST = {
   pickupLine: 1,
   returnLine: 1,
   ladder: 2,
+  force: 2,
+  cutRoof: 3,
+  placeFan: 2,
+  removeFan: 1,
+  /** Extra AP to spray from a smoky tile, and again from thick smoke. */
+  smokySpray: 1,
 } as const;
 
+/** Jobs only a ladder (truck) company does. */
+const LADDER_JOBS = new Set<Action['type']>(['breach', 'force', 'cutRoof', 'placeFan', 'ladder']);
+
 /** Each spray uses one unit of water from the engine feeding the line. */
-export const SPRAY = { range: 3, knockdown: 2, cooling: 320, splashCooling: 80, wetTurns: 2, water: 1 } as const;
+export const SPRAY = { range: 3, smokyRange: 2, knockdown: 2, cooling: 320, splashCooling: 80, wetTurns: 2, water: 1 } as const;
 export const THICK_SMOKE = 60;
 
 /** Precomputed blockers, so pathfinding doesn't rebuild them per step. */
@@ -54,7 +69,8 @@ export interface Blockers {
 export function blockers(state: GameState): Blockers {
   const units = new Map<string, Unit>();
   for (const u of state.units) {
-    if (u.status === 'active' && !u.aboard && !u.carriedBy) units.set(posKey(u.pos), u);
+    // Victims nobody has found yet don't block: the crew would stumble over them.
+    if (u.status === 'active' && !u.aboard && !u.carriedBy && (u.kind === 'firefighter' || u.found)) units.set(posKey(u.pos), u);
   }
   return { trucks: truckOccupancy(state), units };
 }
@@ -107,14 +123,24 @@ export function moveOrigins(state: GameState, u: Unit): Pos[] {
   return truck ? truckTiles(truck) : [];
 }
 
-export function canSprayFrom(state: GameState, from: Pos, target: Pos): string | null {
+/** Thick smoke at the nozzle means the crew can't see far enough to hit distant fire. */
+export function sprayRange(state: GameState, from: Pos): number {
+  return (tileAt(state, from)?.smoke ?? 0) >= THICK_SMOKE ? SPRAY.smokyRange : SPRAY.range;
+}
+
+export function sprayCost(state: GameState, from: Pos): number {
+  const smoke = tileAt(state, from)?.smoke ?? 0;
+  return COST.spray + (smoke >= SEARCH.sightSmoke ? COST.smokySpray : 0) + (smoke >= THICK_SMOKE ? COST.smokySpray : 0);
+}
+
+export function canSprayFrom(state: GameState, from: Pos, target: Pos, range = sprayRange(state, from)): string | null {
   if (from.floor !== target.floor) return 'Target must be on the same floor';
   const dx = Math.sign(target.x - from.x);
   const dy = Math.sign(target.y - from.y);
   if (dx !== 0 && dy !== 0) return 'Spray only in straight lines';
   const dist = Math.abs(target.x - from.x) + Math.abs(target.y - from.y);
   if (dist === 0) return 'Cannot spray your own tile';
-  if (dist > SPRAY.range) return `Out of range (max ${SPRAY.range})`;
+  if (dist > range) return `Out of range (max ${range}${range < SPRAY.range ? ' in thick smoke' : ''})`;
   for (let i = 1; i < dist; i++) {
     const t = tileAt(state, { floor: from.floor, x: from.x + dx * i, y: from.y + dy * i });
     if (!t || !isOpenAir(t)) return 'Line of fire is blocked';
@@ -122,15 +148,28 @@ export function canSprayFrom(state: GameState, from: Pos, target: Pos): string |
   return null;
 }
 
-/** Whether a ladder could be raised from this ground tile to a window on the floor above. */
+/** Open-air tiles above `p` that a ground ladder leaning on the building would reach, floor by floor. */
+export function ladderReach(state: GameState, p: Pos): Pos[] {
+  const out: Pos[] = [];
+  for (let f = p.floor + 1; f < state.floors.length; f++) {
+    const q = { ...p, floor: f };
+    const t = tileAt(state, q);
+    const leansOnBuilding = DIRS.some(([dx, dy]) => {
+      const n = tileAt(state, { ...q, x: q.x + dx, y: q.y + dy });
+      return !!n && n.kind !== 'air' && n.kind !== 'ground';
+    });
+    if (!t || t.kind !== 'air' || !leansOnBuilding) break;
+    out.push(q);
+  }
+  return out;
+}
+
+/** Whether a ground ladder could be raised here: outside, against the building. */
 export function ladderSpotError(state: GameState, p: Pos): string | null {
   const here = tileAt(state, p);
-  const above = tileAt(state, { ...p, floor: p.floor + 1 });
   if (!here || here.kind !== 'ground' || p.floor !== 0) return 'Ladders are raised from the ground outside';
-  if (!above || above.kind !== 'air') return 'No open space above for a ladder';
   if (here.ladder) return 'A ladder is already here';
-  const window = DIRS.some(([dx, dy]) => tileAt(state, { floor: 1, x: p.x + dx, y: p.y + dy })?.kind === 'window');
-  return window ? null : 'Must be right below an upper-floor window';
+  return ladderReach(state, p).length ? null : 'Must stand right against the building';
 }
 
 function findUnit(state: GameState, id: string): Unit | undefined {
@@ -142,7 +181,11 @@ export function lineOf(state: GameState, u: Unit): HoseLine | undefined {
 }
 
 function civilianAt(state: GameState, p: Pos): Unit | undefined {
-  return state.units.find((u) => u.kind === 'civilian' && u.status === 'active' && !u.carriedBy && samePos(u.pos, p));
+  return state.units.find((u) => u.kind === 'civilian' && u.status === 'active' && u.found && !u.carriedBy && samePos(u.pos, p));
+}
+
+export function fanAt(state: GameState, p: Pos) {
+  return state.fans.find((f) => samePos(f.pos, p));
 }
 
 /** Total AP cost of walking a path, or the reason it can't be walked. */
@@ -192,6 +235,7 @@ export function actionCost(state: GameState, action: Action): number | string {
     if (action.type !== 'move') return `${u.name} must get off the truck first`;
   }
   const line = lineOf(state, u);
+  if (LADDER_JOBS.has(action.type) && u.role !== 'ladder') return 'Only ladder crews do that';
 
   let cost: number | string;
   switch (action.type) {
@@ -202,7 +246,7 @@ export function actionCost(state: GameState, action: Action): number | string {
       if (!line || line.kind !== 'attack') return 'Needs an attack line — take one from an engine';
       const truck = state.trucks.find((t) => t.id === line.truckId)!;
       if (truck.water < SPRAY.water) return `${truck.name} is out of water — supply it from a hydrant`;
-      cost = canSprayFrom(state, u.pos, action.target) ?? COST.spray;
+      cost = canSprayFrom(state, u.pos, action.target) ?? sprayCost(state, u.pos);
       break;
     }
     case 'toggle': {
@@ -210,6 +254,7 @@ export function actionCost(state: GameState, action: Action): number | string {
       if (!t || !isAdjacent(u.pos, action.target)) return 'Must be adjacent';
       if (t.kind !== 'door' && t.kind !== 'window') return 'Not a door or window';
       if (t.broken) return 'It is broken and cannot be closed';
+      if (t.locked) return 'Locked — a ladder crew has to force it';
       if (t.open && blockers(state).units.has(posKey(action.target))) return 'Someone is in the way';
       if (t.open && linesThrough(state, action.target).length) return 'A hose runs through it';
       cost = COST.toggle;
@@ -276,8 +321,39 @@ export function actionCost(state: GameState, action: Action): number | string {
       break;
     }
     case 'ladder':
-      if (u.role !== 'ladder') return 'Only ladder crews carry ground ladders';
       cost = ladderSpotError(state, u.pos) ?? COST.ladder;
+      break;
+    case 'force': {
+      const t = tileAt(state, action.target);
+      if (!t || !isAdjacent(u.pos, action.target)) return 'Must be adjacent';
+      cost = t.kind === 'door' && t.locked ? COST.force : 'Not a locked door';
+      break;
+    }
+    case 'cutRoof': {
+      if (tileAt(state, u.pos)?.kind !== 'roof') return 'Get onto the roof first';
+      const t = tileAt(state, action.target);
+      if (!t || !isAdjacent(u.pos, action.target) || t.kind !== 'roof') return 'Cut an adjacent roof tile';
+      if (blockers(state).units.has(posKey(action.target))) return 'Someone is standing there';
+      cost = COST.cutRoof;
+      break;
+    }
+    case 'placeFan': {
+      const t = tileAt(state, action.target);
+      if (!t || !isAdjacent(u.pos, action.target)) return 'Stand next to the door or window the fan should blow through';
+      const opening = t.kind === 'rubble' || ((t.kind === 'door' || t.kind === 'window') && t.open);
+      if (!opening) return 'The fan needs an open door or window to blow through';
+      if (fanAt(state, u.pos)) return 'A fan is already here';
+      const truck = state.trucks.find((tr) => tr.id === u.truck);
+      cost = truck && truck.fans > 0 ? COST.placeFan : 'No fan left on your truck';
+      break;
+    }
+    case 'removeFan': {
+      if (!fanAt(state, action.target)) return 'No fan there';
+      cost = samePos(u.pos, action.target) || isAdjacent(u.pos, action.target) ? COST.removeFan : 'Must be next to the fan';
+      break;
+    }
+    case 'search':
+      cost = searchCost(state, u);
       break;
   }
   if (typeof cost === 'number' && cost > u.ap) return `Needs ${cost} AP (${u.ap} left)`;
@@ -325,6 +401,15 @@ export function performAction(prev: GameState, action: Action): ActionResult {
       }
       if (to.floor !== u.pos.floor) log(`${u.name} climbs to ${floorName(to.floor)}.`);
       if (line) line.tiles = extendLine(line.tiles, action.path);
+      // Walking over a victim nobody had found yet finds them.
+      for (const p of action.path) {
+        for (const c of state.units) {
+          if (c.kind === 'civilian' && c.status === 'active' && !c.found && samePos(c.pos, p)) {
+            c.found = true;
+            log(`${u.name} stumbles onto ${c.name}!`, 'good');
+          }
+        }
+      }
       u.pos = { ...to };
       if (carried) carried.pos = { ...to };
       if (carried && isOutside(tileAt(state, to)!) && to.floor === 0) {
@@ -431,12 +516,45 @@ export function performAction(prev: GameState, action: Action): ActionResult {
       break;
     }
     case 'ladder': {
+      const reach = ladderReach(state, u.pos);
       tileAt(state, u.pos)!.ladder = true;
-      tileAt(state, { ...u.pos, floor: u.pos.floor + 1 })!.ladder = true;
-      log(`${u.name} raises a ladder to ${floorName(u.pos.floor + 1)}.`, 'good');
+      for (const q of reach) tileAt(state, q)!.ladder = true;
+      const top = reach[reach.length - 1].floor;
+      log(`${u.name} raises a ladder to ${top === state.floors.length - 1 ? 'the roof' : floorName(top)}.`, 'good');
       break;
     }
+    case 'force': {
+      const t = tileAt(state, action.target)!;
+      Object.assign(t, { locked: false, open: true });
+      log(`${u.name} forces the locked door.`, 'good');
+      break;
+    }
+    case 'cutRoof': {
+      const t = tileAt(state, action.target)!;
+      Object.assign(t, { kind: 'vent', material: 'air', fuel: 0, fire: 0 });
+      log(`${u.name} cuts a ventilation hole in the roof.`, 'good');
+      break;
+    }
+    case 'placeFan': {
+      const truck = state.trucks.find((tr) => tr.id === u.truck)!;
+      truck.fans -= 1;
+      state.fans.push({ id: `fan${state.nextLineId++}`, truckId: truck.id, pos: { ...u.pos }, target: { ...action.target } });
+      log(`${u.name} sets up a fan blowing into the building.`);
+      break;
+    }
+    case 'removeFan': {
+      const fan = fanAt(state, action.target)!;
+      state.fans = state.fans.filter((f) => f.id !== fan.id);
+      const truck = state.trucks.find((tr) => tr.id === fan.truckId);
+      if (truck) truck.fans += 1;
+      log(`${u.name} shuts down the fan.`);
+      break;
+    }
+    case 'search':
+      searchAround(state, u, log);
+      break;
   }
+  spotVictims(state, log);
   evaluate(state);
   return { state };
 }
