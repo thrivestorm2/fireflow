@@ -137,7 +137,7 @@ speed.
 Select a firefighter (click, **Tab**, or click their truck) and click tiles. In **Auto** mode a click
 does the obvious thing: pick up an adjacent civilian, spray a burning tile in range, open an adjacent
 closed door, or walk to the tile by the shortest path (stairs and ladders included). Explicit modes:
-**1** Auto, **2** Move, **3** Spray, **4** Door, **5** Axe, **6** Carry. **Enter** ends the turn,
+**1** Auto, **2** Move, **3** Spray, **4** Door, **5** Tools, **6** Carry. **Enter** ends the turn,
 **Z** undoes within the turn, **A** / **S** take an attack / supply line, **N** picks up or puts
 down a hose, **B** packs a hose, **Y** works an adjacent hydrant, **G** puts a person down, **E** searches, **P** places or removes a fan, **L**
 raises a ladder, **R** rotates a truck being parked, **H**/**V** toggle the heat/smoke overlays, **Esc** cancels. Hover a tile to inspect
