@@ -175,7 +175,7 @@ export function buildState(scenario: Scenario): GameState {
   floors.forEach((rows, floor) =>
     rows.forEach((row, y) =>
       row.forEach((t, x) => {
-        if (t.contents === 'hydrant') state.hydrants.push({ pos: { floor, x, y }, state: 'capped' });
+        if (t.contents === 'hydrant') state.hydrants.push({ pos: { floor, x, y }, state: 'capped', work: 0 });
       }),
     ),
   );

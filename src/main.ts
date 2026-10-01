@@ -4,7 +4,7 @@ import { endTurn, newGame, summarize } from './core/game';
 import { conditions, isAdjacent, neighbors, tileAt } from './core/grid';
 import { CONTENTS, ignitionOf, MATERIALS } from './core/materials';
 import { reachable } from './core/pathing';
-import { HYDRANT_LABEL, HYDRANT_STEPS, hoseLeft, hydrantAt, linesThrough, supplyFor } from './core/hoses';
+import { HYDRANT_LABEL, HYDRANT_TOTAL, hoseLeft, hydrantAt, linesThrough, supplyFor } from './core/hoses';
 import { placementError, truckTiles } from './core/trucks';
 import type { GameState, Orientation, Pos, Truck, Unit } from './core/types';
 import { houseFire } from './scenarios/house';
@@ -304,12 +304,17 @@ function crewCard(u: Unit): HTMLButtonElement {
   const carrying = u.carrying ? state.units.find((c) => c.id === u.carrying)?.name : undefined;
   const where = u.aboard ? 'aboard' : u.pos.floor === 0 ? 'ground floor' : `floor ${u.pos.floor + 1}`;
   const held = state.hoses.find((l) => l.id === u.line);
-  const water = held ? `${held.kind === 'attack' ? '🧯 attack line' : '🔵 supply line'} (${truckById(held.truckId)?.name}) · ` : u.role === 'ladder' ? '🪜 ' : '';
+  const water = held
+    ? `${held.kind === 'attack' ? '🧯 attack line' : '🟡 5″ supply line'} (${truckById(held.truckId)?.name}) · `
+    : u.role === 'ladder'
+      ? '🪜 '
+      : '';
+  const task = u.task ? '🔧 hooking up hydrant · ' : '';
   b.innerHTML = `
     <span class="name"><span class="dot ${u.role}"></span> ${u.name}${u.status === 'down' ? ' — DOWN' : ''}</span>
     <span class="pips" title="Action points">${'●'.repeat(u.ap)}${'○'.repeat(Math.max(0, u.maxAp - u.ap))}</span>
     <div class="bar"><span style="width:${(100 * u.hp) / u.maxHp}%"></span></div>
-    <span class="meta">${water}${where}${carrying ? ` · carrying ${carrying}` : ''}</span>`;
+    <span class="meta">${task}${water}${where}${carrying ? ` · carrying ${carrying}` : ''}</span>`;
   b.addEventListener('click', () => {
     selectedId = u.id;
     placing = undefined;
@@ -398,7 +403,7 @@ function renderModes(): void {
     if (kind === 'fan') btn.textContent = a?.type === 'removeFan' ? 'Remove fan' : 'Place fan';
     if (kind === 'hydrant') {
       const h = sel && state.hydrants.find((h) => isAdjacent(h.pos, sel.pos));
-      btn.textContent = h ? (HYDRANT_STEPS[h.state]?.label ?? 'Hydrant') : 'Hydrant';
+      btn.textContent = h && (h.state === 'opening' || h.state === 'flowing') ? 'Hydrant' : 'Hook up hydrant';
     }
   }
   const h = $('hint');
@@ -451,8 +456,8 @@ function levelName(f: number): string {
 function hydrantInfo(p: Pos): string {
   const h = hydrantAt(state, p);
   if (!h) return '';
-  const next = HYDRANT_STEPS[h.state];
-  return `<dt>Hydrant</dt><dd>${HYDRANT_LABEL[h.state]}${next ? ` · next: ${next.label} (${next.ap} AP)` : ''}</dd>`;
+  const progress = h.state === 'opening' || h.state === 'flowing' ? '' : ` · hookup ${h.work}/${HYDRANT_TOTAL} AP`;
+  return `<dt>Hydrant</dt><dd>${HYDRANT_LABEL[h.state]}${progress}</dd>`;
 }
 
 function hoseInfo(p: Pos): string {

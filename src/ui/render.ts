@@ -652,9 +652,10 @@ export function drawFloor(g: CanvasRenderingContext2D, state: GameState, floor: 
 }
 
 
-const HOSE_COLOR = { attack: '#ffd54f', supply: '#42a5f5' } as const;
+/** Supply lines are yellow 5" LDH (large-diameter hose); attack lines are blue. */
+const HOSE_COLOR = { attack: '#42a5f5', supply: '#fdd835' } as const;
 
-/** Hose lines: yellow attack lines, blue supply lines. Dashed when no water is behind them. */
+/** Hose lines: blue attack lines, thick yellow 5" supply lines. Dashed when no water is behind them. */
 function drawHoses(g: CanvasRenderingContext2D, state: GameState, floor: number, rect: ViewRect, time: number): void {
   const S = TILE;
   const cx = (p: Pos) => (p.x - rect.x0) * S + S / 2;
@@ -671,7 +672,7 @@ function drawHoses(g: CanvasRenderingContext2D, state: GameState, floor: number,
     for (const p of line.tiles) pts.push(p.floor === floor ? p : null);
     const charged = line.kind === 'supply' ? isSupplyCharged(state, line) : truck.water > 0;
     g.strokeStyle = HOSE_COLOR[line.kind];
-    g.lineWidth = line.kind === 'supply' ? 6 : charged ? 5 : 3;
+    g.lineWidth = line.kind === 'supply' ? 8 : charged ? 4 : 3;
     g.lineCap = 'round';
     g.lineJoin = 'round';
     if (!charged) g.setLineDash([7, 5]);

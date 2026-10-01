@@ -163,27 +163,35 @@ describe('hoses', () => {
 });
 
 describe('hydrants', () => {
-  it('take several crew actions over more than one turn before water flows', () => {
-    // Engine away from the hydrant: x 0..4 is free; park at the right end instead.
+  const hydrant = P(1, 2);
+  const click = (unitId = 'ff1'): Action => ({ type: 'hydrant', unitId, target: hydrant });
+
+  /** Engine parked at the right end of the road; ff1 walks a supply line to the hydrant on the left. */
+  function supplyToHydrant(): GameState {
     let s = run(staged(), place('truck1', 7));
     s = run(s, move('ff1', P(7, 2), P(6, 2)), { type: 'takeLine', unitId: 'ff1', kind: 'supply' });
     s = fresh(s);
-    s = run(s, move('ff1', P(5, 2), P(4, 2), P(3, 2), P(2, 2)));
-    const hydrant = P(1, 2);
-    expect(performAction(s, { type: 'hydrant', unitId: 'ff1', target: hydrant }).error).toMatch(/Needs 1 AP/);
-    s.units[0].ap = 1;
-    s = run(s, { type: 'hydrant', unitId: 'ff1', target: hydrant }); // remove cap (1 AP)
-    expect(s.hydrants[0].state).toBe('uncapped');
-    expect(performAction(s, { type: 'hydrant', unitId: 'ff1', target: hydrant }).error).toMatch(/Needs 2 AP/);
-    s = fresh(s);
-    s = run(s, { type: 'hydrant', unitId: 'ff1', target: hydrant }); // couple hose (2 AP)
-    expect(s.hydrants[0].state).toBe('connected');
-    expect(s.units[0].line).toBeUndefined();
-    expect(s.hoses[0].tiles).toHaveLength(6); // five tiles walked plus the hydrant coupling
-    s = run(s, { type: 'hydrant', unitId: 'ff1', target: hydrant }); // open (2 AP)
-    expect(s.hydrants[0].state).toBe('opening');
-    // The tank is not refilled until water arrives in the next fire phase.
+    return run(s, move('ff1', P(5, 2), P(4, 2), P(3, 2), P(2, 2))); // 0 AP left
+  }
+
+  it('one click starts the hookup and the firefighter finishes it over the following turns', () => {
+    let s = supplyToHydrant();
+    expect(performAction(s, click()).error).toMatch(/no AP left/);
+    s = endTurn(s);
+    s.units[0].ap = 2; // only part of the 5 AP job fits this turn
+    s = run(s, click());
+    expect(s.hydrants[0]).toMatchObject({ state: 'uncapped', work: 2 });
+    expect(s.units[0].task).toEqual(hydrant);
+    expect(s.units[0].ap).toBe(0);
+
+    // Next turn the job carries on by itself: 3 AP to finish coupling and opening.
     s.trucks[0].water = 5;
+    s = endTurn(s);
+    expect(s.hydrants[0]).toMatchObject({ state: 'opening', work: 5 });
+    expect(s.units[0]).toMatchObject({ task: undefined, line: undefined, ap: 1 });
+    expect(s.hoses[0].tiles).toHaveLength(6); // five tiles walked plus the hydrant coupling
+    expect(s.trucks[0].water).toBe(5); // no water until the next fire phase
+
     s = endTurn(s);
     expect(s.hydrants[0].state).toBe('flowing');
     expect(s.trucks[0].water).toBe(13);
@@ -191,11 +199,35 @@ describe('hydrants', () => {
     expect(s.trucks[0].water).toBe(20); // capped at the tank size
   });
 
-  it('coupling needs a supply line, not an attack line', () => {
-    let s = run(parked(), move('ff1', P(2, 2)), { type: 'hydrant', unitId: 'ff1', target: P(1, 2) });
-    s = run(s, { type: 'takeLine', unitId: 'ff1', kind: 'attack' });
+  it('with a full turn of AP the whole hookup is one click', () => {
+    let s = fresh(supplyToHydrant());
+    s.units[0].maxAp = 5;
+    s.units[0].ap = 5;
+    s = run(s, click());
+    expect(s.hydrants[0].state).toBe('opening');
+    expect(s.units[0].task).toBeUndefined();
+  });
+
+  it('walking away abandons the job', () => {
+    let s = fresh(supplyToHydrant());
+    s.units[0].ap = 1;
+    s = run(s, click());
+    expect(s.units[0].task).toEqual(hydrant);
     s = fresh(s);
-    expect(performAction(s, { type: 'hydrant', unitId: 'ff1', target: P(1, 2) }).error).toMatch(/supply line/);
+    s = run(s, move('ff1', P(3, 2)));
+    expect(s.units[0].task).toBeUndefined();
+    s = endTurn(s);
+    expect(s.hydrants[0].work).toBe(1);
+  });
+
+  it('without a supply line only the cap comes off', () => {
+    let s = run(parked(), move('ff1', P(2, 2)));
+    s = run(s, click());
+    expect(s.hydrants[0]).toMatchObject({ state: 'uncapped', work: 1 });
+    expect(s.units[0].task).toBeUndefined();
+    expect(performAction(s, click()).error).toMatch(/supply line/);
+    s = run(s, { type: 'takeLine', unitId: 'ff1', kind: 'attack' });
+    expect(performAction(s, click()).error).toMatch(/supply line/);
   });
 
   it('a tank without a hydrant never refills', () => {

@@ -1,7 +1,7 @@
 import { floorName } from './fire';
 import { evaluate } from './game';
 import { DIRS, isAdjacent, isOpenAir, isOutside, isWalkable, neighbors, posKey, samePos, tileAt } from './grid';
-import { extendLine, HOSE, hoseLeft, HYDRANT_STEPS, hydrantAt, linesThrough } from './hoses';
+import { extendLine, HOSE, hoseLeft, hydrantAt, hydrantWorkAvailable, HYDRANT_TOTAL, linesThrough, workHydrant } from './hoses';
 import { CONTENTS } from './materials';
 import { searchAround, searchCost, SEARCH, spotVictims } from './search';
 import { besideTruck, enginesNear, placementError, truckOccupancy, truckTiles } from './trucks';
@@ -18,7 +18,7 @@ export type Action =
   | { type: 'dropLine'; unitId: string } // put the nozzle/hose end down where you stand
   | { type: 'pickupLine'; unitId: string } // pick up a hose end lying on your tile
   | { type: 'returnLine'; unitId: string } // pack the line you hold back onto its engine
-  | { type: 'hydrant'; unitId: string; target: Pos } // next step of working a hydrant
+  | { type: 'hydrant'; unitId: string; target: Pos } // hook up a hydrant; continues on later turns
   | { type: 'ladder'; unitId: string } // raise a ground ladder against the building
   | { type: 'force'; unitId: string; target: Pos } // ladder crew: force a locked door
   | { type: 'cutRoof'; unitId: string; target: Pos } // ladder crew on the roof: cut a vent hole
@@ -310,14 +310,10 @@ export function actionCost(state: GameState, action: Action): number | string {
       const h = hydrantAt(state, action.target);
       if (!h) return 'Not a hydrant';
       if (!isAdjacent(u.pos, action.target)) return 'Must be next to the hydrant';
-      const step = HYDRANT_STEPS[h.state];
-      if (!step) return h.state === 'opening' ? 'The hydrant is opening — water arrives next turn' : 'The hydrant is already flowing';
-      if (h.state === 'uncapped') {
-        if (line?.kind !== 'supply') return 'Bring a supply line from an engine to couple';
-        const truck = state.trucks.find((t) => t.id === line.truckId)!;
-        if (hoseLeft(state, truck) < 1) return `Not enough hose to reach the hydrant`;
-      }
-      cost = step.ap;
+      const work = hydrantWorkAvailable(state, u, h);
+      if (typeof work === 'string') return work;
+      if (u.ap === 0) return `${u.name} has no AP left this turn`;
+      cost = Math.min(u.ap, work);
       break;
     }
     case 'ladder':
@@ -395,6 +391,7 @@ export function performAction(prev: GameState, action: Action): ActionResult {
     case 'move': {
       const to = action.path[action.path.length - 1];
       const carried = u.carrying ? findUnit(state, u.carrying) : undefined;
+      u.task = undefined; // walking away abandons a hydrant hookup
       if (u.aboard) {
         log(`${u.name} gets off ${state.trucks.find((t) => t.id === u.aboard)?.name}.`);
         u.aboard = undefined;
@@ -498,20 +495,14 @@ export function performAction(prev: GameState, action: Action): ActionResult {
     }
     case 'hydrant': {
       const h = hydrantAt(state, action.target)!;
-      if (h.state === 'capped') {
-        h.state = 'uncapped';
-        log(`${u.name} takes the cap off the hydrant.`);
-      } else if (h.state === 'uncapped') {
-        line!.tiles = extendLine(line!.tiles, [{ ...action.target }]);
-        line!.hydrant = { ...action.target };
-        line!.holder = undefined;
-        u.line = undefined;
-        h.state = 'connected';
-        h.lineId = line!.id;
-        log(`${u.name} couples the supply line to the hydrant.`);
-      } else if (h.state === 'connected') {
-        h.state = 'opening';
-        log(`${u.name} opens the hydrant. Water will reach the engine next turn.`, 'good');
+      workHydrant(state, u, h, cost, log);
+      const more = hydrantWorkAvailable(state, u, h);
+      if (typeof more === 'number' && more > 0) {
+        u.task = { ...h.pos };
+        log(`${u.name} keeps working the hydrant next turn (${HYDRANT_TOTAL - h.work} AP of work left).`);
+      } else {
+        u.task = undefined;
+        if (h.state === 'uncapped') log('Cap is off — bring a supply line to couple.');
       }
       break;
     }

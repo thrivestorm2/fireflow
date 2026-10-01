@@ -1,6 +1,6 @@
 import { posKey, samePos } from './grid';
 import type { SimSystem } from './systems';
-import type { GameState, HoseLine, Hydrant, HydrantState, Pos, Truck } from './types';
+import type { GameState, HoseLine, Hydrant, HydrantState, LogEntry, Pos, Truck, Unit } from './types';
 
 export const HOSE = {
   /** Attack lines (into the fire) and supply lines (to a hydrant) per engine. */
@@ -10,16 +10,17 @@ export const HOSE = {
   hydrantRefill: 8,
 } as const;
 
-/** The crew action that advances a hydrant from each state, and what it costs. */
-export const HYDRANT_STEPS: Partial<Record<HydrantState, { label: string; ap: number }>> = {
-  capped: { label: 'Remove cap', ap: 1 },
-  uncapped: { label: 'Couple supply hose', ap: 2 },
-  connected: { label: 'Open hydrant', ap: 2 },
-};
+/**
+ * AP of crew work to hook up a hydrant: take the cap off, couple the 5" supply
+ * line, open the hydrant. One click starts the job; the firefighter keeps at
+ * it on following turns until it is done.
+ */
+export const HYDRANT_WORK = { cap: 1, couple: 2, open: 2 } as const;
+export const HYDRANT_TOTAL = HYDRANT_WORK.cap + HYDRANT_WORK.couple + HYDRANT_WORK.open;
 
 export const HYDRANT_LABEL: Record<HydrantState, string> = {
   capped: 'capped',
-  uncapped: 'cap off, no hose',
+  uncapped: 'cap off',
   connected: 'hose coupled, closed',
   opening: 'opening — water arrives next turn',
   flowing: 'flowing',
@@ -58,6 +59,74 @@ export function hydrantAt(state: GameState, p: Pos): Hydrant | undefined {
 /** The hydrant (if any) currently supplying this truck. */
 export function supplyFor(state: GameState, truck: Truck): Hydrant | undefined {
   return state.hydrants.find((h) => h.lineId && state.hoses.find((l) => l.id === h.lineId)?.truckId === truck.id);
+}
+
+type Log = (text: string, tone?: LogEntry['tone']) => void;
+
+/** The supply line a firefighter is holding, if any. */
+export function heldSupply(state: GameState, u: Unit): HoseLine | undefined {
+  return state.hoses.find((l) => l.id === u.line && l.kind === 'supply');
+}
+
+/**
+ * How much hookup work `u` can do on `h` now, or why none. Without a supply
+ * line in hand only the cap can come off.
+ */
+export function hydrantWorkAvailable(state: GameState, u: Unit, h: Hydrant): number | string {
+  if (h.state === 'opening') return 'The hydrant is opening — water arrives next turn';
+  if (h.state === 'flowing') return 'The hydrant is already flowing';
+  const line = heldSupply(state, u);
+  if (line && h.state !== 'connected') {
+    const truck = state.trucks.find((t) => t.id === line.truckId)!;
+    if (hoseLeft(state, truck) < 1) return 'Not enough hose to reach the hydrant';
+  }
+  const left = HYDRANT_TOTAL - h.work;
+  if (h.state === 'connected' || line) return left;
+  const capLeft = Math.max(0, HYDRANT_WORK.cap - h.work);
+  return capLeft > 0 ? capLeft : 'Bring a supply line from an engine to couple';
+}
+
+/** Puts up to `ap` of work into the hydrant, advancing its state. Returns the AP actually spent. */
+export function workHydrant(state: GameState, u: Unit, h: Hydrant, ap: number, log: Log): number {
+  let spent = 0;
+  while (spent < ap && h.state !== 'opening' && h.state !== 'flowing') {
+    const line = heldSupply(state, u);
+    if (h.state === 'uncapped' && !line) break;
+    h.work += 1;
+    spent += 1;
+    if (h.state === 'capped' && h.work >= HYDRANT_WORK.cap) {
+      h.state = 'uncapped';
+      log(`${u.name} takes the cap off the hydrant.`);
+    } else if (h.state === 'uncapped' && h.work >= HYDRANT_WORK.cap + HYDRANT_WORK.couple) {
+      line!.tiles = extendLine(line!.tiles, [{ ...h.pos }]);
+      line!.hydrant = { ...h.pos };
+      line!.holder = undefined;
+      u.line = undefined;
+      h.state = 'connected';
+      h.lineId = line!.id;
+      log(`${u.name} couples the 5" supply line to the hydrant.`);
+    } else if (h.state === 'connected' && h.work >= HYDRANT_TOTAL) {
+      h.state = 'opening';
+      log(`${u.name} opens the hydrant. Water will reach the engine next turn.`, 'good');
+    }
+  }
+  return spent;
+}
+
+/** Firefighters partway through hooking up a hydrant carry on with their remaining AP. */
+export function continueHydrantWork(state: GameState, log: Log): void {
+  for (const u of state.units) {
+    if (!u.task) continue;
+    const h = hydrantAt(state, u.task);
+    const work = h && u.status === 'active' ? hydrantWorkAvailable(state, u, h) : 'gone';
+    if (!h || typeof work === 'string' || Math.abs(h.pos.x - u.pos.x) + Math.abs(h.pos.y - u.pos.y) !== 1 || h.pos.floor !== u.pos.floor) {
+      u.task = undefined;
+      continue;
+    }
+    u.ap -= workHydrant(state, u, h, Math.min(u.ap, work), log);
+    const more = hydrantWorkAvailable(state, u, h);
+    if (typeof more === 'string' || more === 0) u.task = undefined;
+  }
 }
 
 /** Opened hydrants charge their supply line; flowing hydrants refill their engine. */

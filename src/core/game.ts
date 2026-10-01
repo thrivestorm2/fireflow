@@ -2,7 +2,7 @@ import { buildState, type Scenario } from './building';
 import { exposureSystem } from './exposure';
 import { fireSystem } from './fire';
 import { forEachTile } from './grid';
-import { waterSystem } from './hoses';
+import { continueHydrantWork, waterSystem } from './hoses';
 import { spotVictims } from './search';
 import { fanSystem } from './ventilation';
 import { Rng } from './rng';
@@ -54,8 +54,10 @@ export function endTurn(prev: GameState, systems: SimSystem[] = SYSTEMS): GameSt
   state.turn += 1;
   runEnvironment(state, systems);
   arriveTrucks(state);
+  const log = (text: string, tone: LogEntry['tone'] = 'info') => state.log.push({ turn: state.turn, text, tone });
   for (const u of state.units) if (u.status === 'active') u.ap = u.maxAp;
-  spotVictims(state, (text, tone = 'info') => state.log.push({ turn: state.turn, text, tone }));
+  continueHydrantWork(state, log);
+  spotVictims(state, log);
   evaluate(state);
   return state;
 }

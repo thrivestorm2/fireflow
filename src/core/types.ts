@@ -106,6 +106,8 @@ export interface Unit {
   status: UnitStatus;
   /** Firefighter: id of the hose line whose nozzle (or open end) they are holding. */
   line?: string;
+  /** Firefighter: hydrant they are hooking up; work carries on automatically next turn. */
+  task?: Pos;
   /** Firefighter: the truck they came on. */
   truck?: string;
   /** Firefighter still riding their truck. Same id as `truck` while aboard. */
@@ -172,6 +174,8 @@ export interface Hydrant {
   pos: Pos;
   state: HydrantState;
   lineId?: string;
+  /** AP of crew work put into hooking it up so far (see HYDRANT_WORK). */
+  work: number;
 }
 
 export type GameStatus = 'playing' | 'won' | 'lost';

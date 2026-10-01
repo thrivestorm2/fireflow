@@ -99,19 +99,22 @@ Anyone can open and close unlocked doors and windows, which is the simplest vent
 
 - **Water comes from the engine.** Each engine arrives with a full tank, and every spray uses one unit
   from the engine feeding that line. Until the engine is supplied by a hydrant, the tank only goes down.
-- **Hose is limited.** A crew member next to an engine pulls off an **attack line** (up to 2 per engine)
-  or a **supply line** (1 per engine). The hose follows their exact path, one tile of hose per tile
+- **Hose is limited.** A crew member next to an engine pulls off an **attack line** (blue, up to 2 per
+  engine) or a **5″ supply line** (yellow large-diameter hose, 1 per engine). The hose follows their exact path, one tile of hose per tile
   walked, through doors, up stairs and up ladders. They can't go further than the hose left on that
   engine. Walking back along the hose takes it back in. The hose can be put down and picked up by
   someone else, or packed back onto the engine. A door with a hose through it can't be closed.
 - **Spraying needs the nozzle of an attack line** whose engine still has water.
-- **Hydrants take crew time.** Run a supply line to a hydrant, then work it from an adjacent tile:
-  1. **Remove cap**: 1 AP
-  2. **Couple supply hose**: 2 AP, using one more tile of hose
-  3. **Open hydrant**: 2 AP. Water reaches the engine during the next fire phase.
+- **Hydrants take crew time.** Walk a supply line next to a hydrant and **click the hydrant** (or
+  press **Y**). Hooking up is 5 AP of work: take the cap off (1), couple the hose (2, using one more
+  tile of hose), and open the hydrant (2). The firefighter spends whatever AP they have left on it.
+  If the job isn't finished, they carry on automatically at the start of the next turn, unless they
+  walk away, which abandons it (the work already done stays done). Without a supply line in hand,
+  only the cap comes off.
 
-  After that, the engine's tank refills by 8 units a turn, up to its capacity. The badge on a hydrant
-  shows how far the crew has got. A supply line with water flowing in it is drawn solid and animated.
+  Water reaches the engine during the fire phase after the hydrant opens. After that, the engine's
+  tank refills by 8 units a turn, up to its capacity. The hydrant's badge and the inspector show
+  hookup progress. A supply line with water flowing in it is drawn solid and animated.
 
 | Action | AP | Notes |
 |---|---|---|
@@ -119,7 +122,7 @@ Anyone can open and close unlocked doors and windows, which is the simplest vent
 | Attack / supply line | 1 | Next to an engine with hose left. |
 | Put down / pick up hose | 0 / 1 | Pick up the loose end of a line from its tile. |
 | Pack hose | 1 | Next to the line's engine; the whole line goes back on the truck. |
-| Hydrant | 1 / 2 / 2 | Remove cap, couple, open — see above. |
+| Hook up hydrant | up to 5 total | One click; uses your remaining AP and continues next turn — see above. |
 | Spray | 1 | Holding an attack line. Straight line, up to 3 tiles, unobstructed. −2 fire, −320 °C, leaves the tile wet for 2 turns. Uses 1 water from the engine. |
 | Door | 1 | Open or close an adjacent door or window. |
 | Carry / Put down | 1 / 0 | Pick up an adjacent civilian (hands must be free of hose). Carrying them to any outside tile rescues them. |
@@ -139,7 +142,7 @@ does the obvious thing: pick up an adjacent civilian, spray a burning tile in ra
 closed door, or walk to the tile by the shortest path (stairs and ladders included). Explicit modes:
 **1** Auto, **2** Move, **3** Spray, **4** Door, **5** Tools, **6** Carry. **Enter** ends the turn,
 **Z** undoes within the turn, **A** / **S** take an attack / supply line, **N** picks up or puts
-down a hose, **B** packs a hose, **Y** works an adjacent hydrant, **G** puts a person down, **E** searches, **P** places or removes a fan, **L**
+down a hose, **B** packs a hose, **Y** hooks up an adjacent hydrant, **G** puts a person down, **E** searches, **P** places or removes a fan, **L**
 raises a ladder, **R** rotates a truck being parked, **H**/**V** toggle the heat/smoke overlays, **Esc** cancels. Hover a tile to inspect
 its material, contents, condition and temperature. Dashed orange borders mark tiles close to igniting.
 
