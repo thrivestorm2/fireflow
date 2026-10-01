@@ -1,5 +1,5 @@
 import { AMBIENT, CONTENTS, MATERIALS } from './materials';
-import type { Contents, CrewRole, GameState, Material, Pos, Tile, TileKind, Truck, TruckType, Unit } from './types';
+import type { Contents, CrewRole, GameState, Material, Pos, Rank, Tile, TileKind, Truck, TruckType, Unit } from './types';
 
 /**
  * Plan legend — what each tile is and what it is made of:
@@ -119,9 +119,19 @@ export const TRUCK_SPECS: Record<TruckType, { length: number; width: number; wat
   ladder: { length: 7, width: 2, water: 0, hose: 0, fans: 1 },
 };
 
-export function createFirefighter(id: string, name: string, role: CrewRole, truck?: string, pos: Pos = { floor: 0, x: 0, y: 0 }): Unit {
+/** Ranks by place in a dispatch's crew list: the officer first, then the engineer (driver), then firefighters. */
+export const crewRank = (i: number): Rank => (i === 0 ? 'LT' : i === 1 ? 'ENG' : 'FF');
+
+export function createFirefighter(
+  id: string,
+  name: string,
+  role: CrewRole,
+  truck?: string,
+  pos: Pos = { floor: 0, x: 0, y: 0 },
+  rank: Rank = 'FF',
+): Unit {
   const ap = CREW_AP[role];
-  return { id, name, kind: 'firefighter', role, pos: { ...pos }, hp: 100, maxHp: 100, ap, maxAp: ap, status: 'active', truck, aboard: truck };
+  return { id, name, kind: 'firefighter', role, rank, pos: { ...pos }, hp: 100, maxHp: 100, ap, maxAp: ap, status: 'active', truck, aboard: truck };
 }
 
 export function createCivilian(id: string, name: string, pos: Pos): Unit {
@@ -152,7 +162,7 @@ export function buildState(scenario: Scenario): GameState {
 
   let n = 0;
   const units: Unit[] = scenario.dispatch.flatMap((d, i) =>
-    d.crew.map((name) => createFirefighter(`ff${++n}`, name, d.type, trucks[i].id)),
+    d.crew.map((name, j) => createFirefighter(`ff${++n}`, name, d.type, trucks[i].id, undefined, crewRank(j))),
   );
   units.push(...scenario.civilians.map((c, i) => createCivilian(`cv${i + 1}`, c.name, c.pos)));
 

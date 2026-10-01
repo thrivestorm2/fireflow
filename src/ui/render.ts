@@ -389,9 +389,13 @@ function atRisk(t: Tile): boolean {
   return t.temperature - AMBIENT >= (ign - AMBIENT) * 0.75;
 }
 
-const HELMET: Record<string, string> = { engine: '#f5c518', ladder: '#ff8a3d' };
+/** Officers wear red; engineers and firefighters yellow. */
+const HELMET = { officer: '#d32f2f', crew: '#f5c518' };
 
-function drawUnit(g: CanvasRenderingContext2D, u: Unit, px: number, py: number, selected: boolean): void {
+/** Short unit designation from a truck name: "Engine 1" → "E1", "Ladder 7" → "L7". */
+export const unitLabel = (truckName: string): string => truckName.replace(/^(\w)\w*\s*/, '$1');
+
+function drawUnit(g: CanvasRenderingContext2D, u: Unit, px: number, py: number, selected: boolean, truckName?: string): void {
   const S = TILE;
   const cx = px + S / 2;
   const cy = py + S / 2;
@@ -428,26 +432,32 @@ function drawUnit(g: CanvasRenderingContext2D, u: Unit, px: number, py: number, 
     g.strokeStyle = '#4fd1ff';
     g.lineWidth = 3;
     g.beginPath();
-    g.arc(cx, cy, 13, 0, Math.PI * 2);
+    g.arc(cx, cy, 15, 0, Math.PI * 2);
     g.stroke();
     g.lineWidth = 1;
   }
-  g.fillStyle = u.status === 'down' ? '#555' : HELMET[u.role ?? 'engine'];
+  const officer = u.rank === 'LT';
+  g.fillStyle = u.status === 'down' ? '#555' : officer ? HELMET.officer : HELMET.crew;
   g.strokeStyle = '#1a1a1a';
   g.lineWidth = 2;
   g.beginPath();
-  g.arc(cx, cy, 10, 0, Math.PI * 2);
+  g.arc(cx, cy, 12, 0, Math.PI * 2);
   g.fill();
   g.stroke();
   g.lineWidth = 1;
-  g.fillStyle = '#1a1a1a';
-  g.font = 'bold 12px system-ui';
+  // Unit on top (E1, L7), position below (LT, ENG, FF).
+  g.fillStyle = officer || u.status === 'down' ? '#ffffff' : '#1a1a1a';
   g.textAlign = 'center';
-  g.fillText(u.name[0], cx, cy + 4);
+  g.textBaseline = 'middle';
+  g.font = 'bold 9px system-ui, sans-serif';
+  g.fillText(truckName ? unitLabel(truckName) : '', cx, cy - 4);
+  g.font = 'bold 7px system-ui, sans-serif';
+  g.fillText(u.rank ?? 'FF', cx, cy + 5);
+  g.textBaseline = 'alphabetic';
   if (u.ap === 0 && u.status === 'active') {
     g.fillStyle = 'rgba(0,0,0,0.35)';
     g.beginPath();
-    g.arc(cx, cy, 11, 0, Math.PI * 2);
+    g.arc(cx, cy, 13, 0, Math.PI * 2);
     g.fill();
   }
   hpBar(g, u, px, py);
@@ -524,19 +534,29 @@ function drawTruckShape(g: CanvasRenderingContext2D, truck: Truck, tiles: Pos[],
     if (frac > 0) box(S, S + (L - 6 - S) * frac, D - 6, D - 2, frac > 0.3 ? '#64b5f6' : '#ef5350');
   }
   // Big white unit name (E1, L7) on the clear part of the body, outlined so it reads on any background.
-  const label = truck.name.replace(/^(\w)\w*\s*/, '$1');
+  // Rotated so it reads upright to someone standing at the rear looking toward the cab.
+  const label = unitLabel(truck.name);
   const [lx, ly] = at(truck.type === 'engine' ? 3.5 * S : L * 0.6, D / 2);
-  g.font = `900 ${Math.round(D * 0.6)}px system-ui, sans-serif`;
+  const angle = horizontal ? (truck.reversed ? Math.PI / 2 : -Math.PI / 2) : truck.reversed ? Math.PI : 0;
+  g.save();
+  g.translate(lx, ly);
+  g.rotate(angle);
+  let size = Math.round(D * 0.6);
+  g.font = `900 ${size}px system-ui, sans-serif`;
+  const fit = (D - 8) / g.measureText(label).width; // text now runs across the truck's width
+  if (fit < 1) {
+    size = Math.floor(size * fit);
+    g.font = `900 ${size}px system-ui, sans-serif`;
+  }
   g.textAlign = 'center';
   g.textBaseline = 'middle';
   g.lineJoin = 'round';
   g.lineWidth = 5;
   g.strokeStyle = 'rgba(0,0,0,0.75)';
-  g.strokeText(label, lx, ly);
+  g.strokeText(label, 0, 0);
   g.fillStyle = '#ffffff';
-  g.fillText(label, lx, ly);
-  g.textBaseline = 'alphabetic';
-  g.lineWidth = 1;
+  g.fillText(label, 0, 0);
+  g.restore();
 
   if (ghost) {
     // Chevron pointing the way the truck faces.
@@ -653,17 +673,18 @@ export function drawFloor(g: CanvasRenderingContext2D, state: GameState, floor: 
 
   for (const fan of state.fans) if (seen(fan.pos)) drawFan(g, state, fan, px(fan.pos.x), py(fan.pos.y), view.time);
 
-  // Crew still aboard sit on their truck, front seats first, and can be clicked like anyone else.
+  const truckName = (u: Unit) => state.trucks.find((t) => t.id === u.truck)?.name;
+  // Crew still aboard sit on their truck (engineer driving, lieutenant beside) and can be clicked like anyone else.
   for (const u of state.units) {
     if (!u.aboard || u.status !== 'active') continue;
     const seat = seatOf(state, u);
-    if (seat && seen(seat)) drawUnit(g, u, px(seat.x), py(seat.y), sel?.id === u.id);
+    if (seat && seen(seat)) drawUnit(g, u, px(seat.x), py(seat.y), sel?.id === u.id, truckName(u));
   }
 
   for (const u of state.units) {
     if (u.status === 'rescued' || u.aboard || u.carriedBy || !seen(u.pos)) continue;
     if (u.kind === 'civilian' && !u.found) continue; // nobody has found them yet
-    drawUnit(g, u, px(u.pos.x), py(u.pos.y), sel?.id === u.id);
+    drawUnit(g, u, px(u.pos.x), py(u.pos.y), sel?.id === u.id, truckName(u));
     const carried = u.carrying && state.units.find((c) => c.id === u.carrying);
     if (carried) drawUnit(g, carried, px(u.pos.x), py(u.pos.y), false);
   }

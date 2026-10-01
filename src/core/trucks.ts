@@ -25,12 +25,22 @@ export function seatTiles(truck: Truck): Pos[] {
   return truckTiles(truck).sort((a, b) => along(a) - along(b) || across(a) - across(b));
 }
 
-/** Where a crew member still aboard is sitting: one seat each, in crew order. */
+/**
+ * Where a crew member still aboard is sitting. The engineer drives (front left,
+ * as seen facing the way the truck points), the lieutenant rides front right,
+ * and firefighters fill the seats behind in crew order.
+ */
 export function seatOf(state: GameState, u: Unit): Pos | undefined {
   const truck = state.trucks.find((t) => t.id === u.aboard);
   if (!truck) return undefined;
-  const crew = state.units.filter((c) => c.aboard === truck.id && c.status === 'active');
-  return seatTiles(truck)[crew.findIndex((c) => c.id === u.id)];
+  const tiles = seatTiles(truck);
+  // seatTiles orders each row by smaller x / y first; which of those is the driver's
+  // left depends on the facing (west → south side, east → north, north → west, south → east).
+  const driver = (truck.orientation === 'h') !== truck.reversed ? 1 : 0;
+  if (u.rank === 'ENG') return tiles[driver];
+  if (u.rank === 'LT') return tiles[1 - driver];
+  const riders = state.units.filter((c) => c.aboard === truck.id && c.status === 'active' && c.rank !== 'ENG' && c.rank !== 'LT');
+  return tiles.slice(2)[riders.findIndex((c) => c.id === u.id)];
 }
 
 /**

@@ -92,12 +92,16 @@ export type UnitKind = 'firefighter' | 'civilian';
 export type UnitStatus = 'active' | 'down' | 'rescued' | 'dead';
 /** Engine crews fight fire with hoses; ladder crews search, rescue and raise ladders. */
 export type CrewRole = 'engine' | 'ladder';
+/** Position on the crew: lieutenant (officer, front right seat), engineer (driver) or firefighter. */
+export type Rank = 'LT' | 'ENG' | 'FF';
 
 export interface Unit {
   id: string;
   name: string;
   kind: UnitKind;
   role?: CrewRole;
+  /** Firefighter: position on the crew. */
+  rank?: Rank;
   pos: Pos;
   hp: number;
   maxHp: number;

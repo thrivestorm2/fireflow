@@ -182,10 +182,16 @@ button.primary:hover:not(:disabled) { background: #c4461a; }
 .truck-head .tstatus { color: var(--muted); font-size: 12px; margin-left: auto; text-align: right; }
 .truck-head button { padding: 3px 10px; }
 .truck.enroute { opacity: 0.6; }
+.truck.staged { cursor: pointer; }
+.truck.staged:hover { border-color: #f5c518; }
+.truck.staged.placing { border-color: #f5c518; box-shadow: 0 0 0 1px #f5c518 inset; }
+.at-scene { background: #2e7d32; color: #fff; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 6px; border-radius: 3px; }
 .truck .crewlist { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
 .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; border: 1px solid #000; }
 .dot.engine { background: #f5c518; }
 .dot.ladder { background: #ff8a3d; }
+.dot.officer { background: #d32f2f; }
+.dot.crew { background: #f5c518; }
 
 .inspector dl { display: grid; grid-template-columns: auto 1fr; gap: 1px 10px; margin: 0; }
 .inspector dt { color: var(--muted); }

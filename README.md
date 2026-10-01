@@ -56,17 +56,22 @@ extra AP to climb over (sofas, beds, tables).
 ## Trucks and crews
 
 Trucks are a limited resource dispatched on a schedule. In the house scenario: Engine 1 on turn 1,
-Ladder 7 on turn 3, Engine 4 on turn 5. A truck that has arrived waits in staging until you **park**
-it: click *Park* and pick a road or driveway tile. **R** (or right-click) turns it a quarter at a
+Ladder 7 on turn 3, Engine 4 on turn 5. A truck that has arrived shows **At Scene** in the Dispatch
+panel and waits there until you **park** it: click its card to pick it up (click it again to put it
+back), then pick a road or driveway tile. Its crew can't be used until it's parked. **R** (or right-click) turns it a quarter at a
 time, so the front can face any way. While placing, the arrow and white headlights mark the front (cab)
 and red lights mark the back.
 
 | Truck | Size | Water tank | Hose | Crew |
 |---|---|---|---|---|
-| Engine | 2 × 5 tiles | 20 units | 28 tiles | engine crew (yellow), 4 AP: hoses and hydrants |
-| Ladder | 2 × 7 tiles | — | — | ladder crew (orange), 5 AP: forcible entry, ventilation, ladders, 1 fan |
+| Engine | 2 × 5 tiles | 20 units | 28 tiles | engine crew, 4 AP: hoses and hydrants |
+| Ladder | 2 × 7 tiles | — | — | ladder crew, 5 AP: forcible entry, ventilation, ladders, 1 fan |
 
-The crew rides on the truck, drawn in seats from the cab back. Click a seated firefighter to select
+Each firefighter's circle shows their unit on top (E1, L7…) and their position below: **LT**
+(lieutenant, the officer, red circle), **ENG** (engineer, yellow) or **FF** (firefighter, yellow). In a
+scenario's crew list the first name is the LT, the second the ENG and the rest FF. The crew rides on
+the truck: the ENG in the driver's seat (front left, facing the way the truck points), the LT front
+right, and FFs behind. Click a seated firefighter to select
 them, then click a tile next to the truck to get them off. Units
 take up a tile each: they can pass through teammates but can't stop on an occupied tile. Movement and
 actions share the firefighter's AP for the turn.
@@ -199,7 +204,7 @@ scenario plus the same actions always produce the same game.
 Draw each floor as two layers of strings: a `plan` (kind and material) and an optional `contents`
 overlay, using the legends in `src/core/building.ts`. All floors share one size, and stairs must sit
 at the same x/y on adjacent floors. Then list the starting fires, the civilians, and the `dispatch`:
-each truck's type, arrival turn and crew.
+each truck's type, arrival turn and crew (lieutenant first, then the engineer, then firefighters).
 
 ### Adding another kind of emergency
 

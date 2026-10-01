@@ -262,9 +262,14 @@ function doEndTurn(): void {
   showBanner('🔥 Fire phase');
   state = endTurn(state);
   history = [];
-  if (!selected()) selectedId = firefighters().find((u) => u.status === 'active')?.id;
+  if (!selected())
+    selectedId = firefighters().find((u) => u.status === 'active' && truckById(u.truck)?.status === 'placed')?.id;
   const arrived = state.trucks.filter((t) => t.status === 'staged' && t.arrivalTurn === state.turn);
-  setHint(arrived.length ? `${arrived.map((t) => t.name).join(' and ')} on scene — park it.` : `Turn ${state.turn}. Your move.`);
+  setHint(
+    arrived.length
+      ? `${arrived.map((t) => t.name).join(' and ')} at scene — click it in Dispatch to park.`
+      : `Turn ${state.turn}. Your move.`,
+  );
   render();
 }
 
@@ -378,7 +383,7 @@ function crewCard(u: Unit): HTMLButtonElement {
       : '';
   const task = u.task ? '🔧 hooking up hydrant · ' : '';
   b.innerHTML = `
-    <span class="name"><span class="dot ${u.role}"></span> ${u.name}${u.status === 'down' ? ' — DOWN' : ''}</span>
+    <span class="name"><span class="dot ${u.rank === 'LT' ? 'officer' : 'crew'}"></span> ${u.rank ?? 'FF'} ${u.name}${u.status === 'down' ? ' — DOWN' : ''}</span>
     <span class="pips" title="Action points">${'●'.repeat(u.ap)}${'○'.repeat(Math.max(0, u.maxAp - u.ap))}</span>
     <div class="bar"><span style="width:${(100 * u.hp) / u.maxHp}%"></span></div>
     <span class="meta">${task}${water}${where}${carrying ? ` · carrying ${carrying}` : ''}</span>`;
@@ -403,7 +408,7 @@ function renderDispatch(): void {
       const n = t.arrivalTurn - state.turn;
       status = `en route — arrives turn ${t.arrivalTurn}${n === 1 ? ' (next)' : ''}`;
     } else if (t.status === 'staged') {
-      status = 'on scene — waiting to park';
+      status = placing?.truckId === t.id ? 'click a road tile to park · click here to cancel' : 'click to park';
     } else if (t.type === 'engine') {
       const supply = supplyFor(state, t);
       const src = supply ? (supply.state === 'flowing' ? ' · hydrant ✓' : ' · hydrant ' + supply.state) : '';
@@ -411,21 +416,22 @@ function renderDispatch(): void {
     } else {
       status = 'parked';
     }
-    head.innerHTML = `<span class="dot ${t.type}"></span><span class="tname">${t.name}</span><span class="tstatus">${status}</span>`;
+    const badge = t.status === 'staged' ? '<span class="at-scene">At Scene</span>' : '';
+    head.innerHTML = `<span class="dot ${t.type}"></span><span class="tname">${t.name}</span>${badge}<span class="tstatus">${status}</span>`;
     if (t.status === 'staged') {
-      const btn = document.createElement('button');
-      btn.textContent = placing?.truckId === t.id ? 'Cancel' : 'Park';
-      btn.className = placing?.truckId === t.id ? '' : 'primary';
-      btn.addEventListener('click', () => {
+      // The whole card toggles parking: click once to pick the truck up, again to put it back.
+      if (placing?.truckId === t.id) box.classList.add('placing');
+      box.title = placing?.truckId === t.id ? `Cancel parking ${t.name}` : `Park ${t.name}`;
+      box.addEventListener('click', () => {
         if (placing?.truckId === t.id) {
           placing = undefined;
           setHintAndRender('Parking cancelled.');
         } else startPlacing(t);
       });
-      head.append(btn);
     }
     box.append(head);
-    if (t.status !== 'enroute') {
+    // Crew only become available once the truck is parked.
+    if (t.status === 'placed') {
       const list = document.createElement('div');
       list.className = 'crewlist';
       const crew = state.units.filter((u) => u.truck === t.id);
@@ -620,8 +626,8 @@ function restart(): void {
   viewFloor = 0;
   buildStage();
   const first = state.trucks.find((t) => t.status === 'staged');
-  if (first) startPlacing(first);
-  else render();
+  if (first) setHint(`${first.name} at scene — click it in Dispatch to park.`);
+  render();
 }
 
 // ---------------------------------------------------------------- wiring

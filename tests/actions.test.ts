@@ -93,13 +93,13 @@ describe('trucks', () => {
     expect(s.trucks[1].water).toBe(0);
   });
 
-  it('crew sit on the truck front seats first, and the front can face either end', () => {
+  it('the engineer drives, the lieutenant rides front right, and the front can face either end', () => {
     let s = run(staged(), place('truck1', 0)); // front (cab) at the left
     expect(['ff1', 'ff2'].map((id) => seatOf(s, s.units.find((u) => u.id === id)!))).toEqual([P(0, 0), P(0, 1)]);
     s = run(staged(), { type: 'placeTruck', truckId: 'truck1', pos: P(0, 0), orientation: 'h', reversed: true });
     expect(s.trucks[0].reversed).toBe(true);
     expect(seatTiles(s.trucks[0])[0]).toEqual(P(4, 0)); // cab now at the right end
-    expect(seatOf(s, s.units[1])).toEqual(P(4, 1));
+    expect(seatOf(s, s.units[1])).toEqual(P(4, 0)); // engineer drives: front left, facing east
     // Once off the truck, a firefighter no longer has a seat.
     s = run(s, move('ff1', P(0, 2)));
     expect(seatOf(s, s.units[0])).toBeUndefined();
