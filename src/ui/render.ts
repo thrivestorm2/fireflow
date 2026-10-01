@@ -523,11 +523,20 @@ function drawTruckShape(g: CanvasRenderingContext2D, truck: Truck, tiles: Pos[],
     const frac = truck.water / truck.maxWater;
     if (frac > 0) box(S, S + (L - 6 - S) * frac, D - 6, D - 2, frac > 0.3 ? '#64b5f6' : '#ef5350');
   }
-  g.fillStyle = '#fff';
-  g.font = 'bold 11px system-ui';
+  // Big white unit name (E1, L7) on the clear part of the body, outlined so it reads on any background.
+  const label = truck.name.replace(/^(\w)\w*\s*/, '$1');
+  const [lx, ly] = at(truck.type === 'engine' ? 3.5 * S : L * 0.6, D / 2);
+  g.font = `900 ${Math.round(D * 0.6)}px system-ui, sans-serif`;
   g.textAlign = 'center';
-  const [lx, ly] = at(L - S, D / 2 - 6);
-  g.fillText(truck.name.replace(/^(\w)\w*\s*/, '$1'), lx, ly + 4);
+  g.textBaseline = 'middle';
+  g.lineJoin = 'round';
+  g.lineWidth = 5;
+  g.strokeStyle = 'rgba(0,0,0,0.75)';
+  g.strokeText(label, lx, ly);
+  g.fillStyle = '#ffffff';
+  g.fillText(label, lx, ly);
+  g.textBaseline = 'alphabetic';
+  g.lineWidth = 1;
 
   if (ghost) {
     // Chevron pointing the way the truck faces.
