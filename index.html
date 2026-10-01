@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fireflow</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>🔥 Fireflow</h1>
+      <div id="scenario" class="scenario"></div>
+      <div id="turn" class="turn"></div>
+    </header>
+    <main class="layout">
+      <section id="floors" class="floors" aria-label="Building floors"></section>
+      <aside class="sidebar">
+        <div class="panel">
+          <div id="summary" class="summary"></div>
+          <div class="row">
+            <button id="end-turn" class="primary" title="Enter">End turn ⏎</button>
+            <button id="undo" title="Z">Undo</button>
+          </div>
+        </div>
+        <div class="panel">
+          <h2>Crew</h2>
+          <div id="crew" class="crew"></div>
+        </div>
+        <div class="panel">
+          <h2>Action</h2>
+          <div id="modes" class="modes"></div>
+          <div class="row">
+            <button id="drop" title="G">Drop</button>
+            <button id="refill" title="R">Refill</button>
+          </div>
+          <p id="hint" class="hint"></p>
+        </div>
+        <div class="panel">
+          <h2>View</h2>
+          <div id="overlays" class="modes"></div>
+          <div id="inspector" class="inspector"></div>
+        </div>
+        <div class="panel log-panel">
+          <h2>Radio log</h2>
+          <ol id="log" class="log"></ol>
+        </div>
+        <details class="panel help">
+          <summary>How to play</summary>
+          <ul>
+            <li>Each turn the <b>fire acts first</b>: heat spreads, things ignite, smoke drifts, the structure weakens. Then your crew acts.</li>
+            <li>Select a firefighter (Tab or click) and click tiles. <b>Auto</b> mode moves, sprays fire, opens doors and picks up people.</li>
+            <li>Each firefighter has <b>4 AP</b> and a 6-shot water tank. Refill next to the engine <b>E</b>.</li>
+            <li>Spray reaches 3 tiles in a straight, unobstructed line. Wet tiles resist ignition for 2 turns.</li>
+            <li>Closed doors hold fire back. Heat rises: fire below weakens the floor above and climbs the stairwell.</li>
+            <li>Dashed orange borders mark tiles close to igniting. Upper floors can collapse — anyone on them falls.</li>
+            <li>Carry civilians out to the street. Smoke and heat hurt them every turn.</li>
+            <li>Keys: 1–6 modes, Tab next firefighter, Enter end turn, Z undo, G drop, R refill, H/V overlays.</li>
+          </ul>
+        </details>
+      </aside>
+    </main>
+    <div id="modal" class="modal" hidden></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
