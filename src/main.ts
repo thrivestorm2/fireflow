@@ -1,11 +1,11 @@
 import { actionCost, performAction, type Action } from './core/actions';
 import { exposureDamage } from './core/exposure';
 import { endTurn, newGame, summarize } from './core/game';
-import { conditions, isAdjacent, neighbors, tileAt } from './core/grid';
+import { conditions, isAdjacent, neighbors, samePos, tileAt } from './core/grid';
 import { CONTENTS, ignitionOf, MATERIALS } from './core/materials';
 import { reachable } from './core/pathing';
 import { HYDRANT_LABEL, HYDRANT_TOTAL, hoseLeft, hydrantAt, linesThrough, supplyFor } from './core/hoses';
-import { placementError, truckTiles } from './core/trucks';
+import { placementError, seatOf, truckTiles } from './core/trucks';
 import type { GameState, Orientation, Pos, Truck, Unit } from './core/types';
 import { houseFire } from './scenarios/house';
 import { MODES, planClick, type Mode } from './ui/intent';
@@ -29,7 +29,15 @@ let overlay: Overlay = 'normal';
 let hover: Pos | undefined;
 let hint = { text: '', error: false };
 /** Truck currently being parked, if any. */
-let placing: { truckId: string; orientation: Orientation } | undefined;
+let placing: { truckId: string; orientation: Orientation; reversed: boolean } | undefined;
+
+/** R turns the truck a quarter clockwise: front facing left → up → right → down. */
+const FACINGS: { orientation: Orientation; reversed: boolean; label: string }[] = [
+  { orientation: 'h', reversed: false, label: 'left' },
+  { orientation: 'v', reversed: false, label: 'up' },
+  { orientation: 'h', reversed: true, label: 'right' },
+  { orientation: 'v', reversed: true, label: 'down' },
+];
 
 const canvases: HTMLCanvasElement[] = [];
 let rects: ViewRect[] = [];
@@ -139,10 +147,10 @@ function onTileClick(p: Pos): void {
   if (placing) {
     if (p.floor !== 0) return setHintAndRender('Trucks park on the ground floor.', true);
     const truck = truckById(placing.truckId)!;
-    if (commit([{ type: 'placeTruck', truckId: truck.id, pos: p, orientation: placing.orientation }])) {
+    if (commit([{ type: 'placeTruck', truckId: truck.id, pos: p, orientation: placing.orientation, reversed: placing.reversed }])) {
       placing = undefined;
       selectedId = state.units.find((u) => u.aboard === truck.id && u.status === 'active')?.id ?? selectedId;
-      setHintAndRender(`${truck.name} parked. Click a tile next to it to get the crew off.`);
+      setHintAndRender(`${truck.name} parked. Click a crew member on the truck, then a tile next to it to get them off.`);
     }
     return;
   }
@@ -154,7 +162,13 @@ function onTileClick(p: Pos): void {
     selectedId = own.id;
     return setHintAndRender(`${own.name} selected.`);
   }
-  // Clicking a parked truck selects the next crew member still aboard.
+  // Clicking a crew member seated on a truck selects them.
+  const seated = firefighters().find((u) => u.aboard && u.status === 'active' && samePos(seatOf(state, u) ?? NOWHERE, p));
+  if (seated) {
+    selectedId = seated.id;
+    return setHintAndRender(`${seated.name} selected — click a tile next to ${truckById(seated.aboard)?.name} to get off.`);
+  }
+  // Clicking elsewhere on a parked truck selects the next crew member still aboard.
   const truck = state.trucks.find((t) => t.status === 'placed' && footprintHas(t, p));
   if (truck && (!sel || !sel.aboard || sel.aboard !== truck.id)) {
     const crew = state.units.find((u) => u.aboard === truck.id && u.status === 'active');
@@ -172,6 +186,8 @@ function onTileClick(p: Pos): void {
   commit(plan.actions);
 }
 
+const NOWHERE: Pos = { floor: -1, x: -1, y: -1 };
+
 function footprintHas(t: Truck, p: Pos): boolean {
   return p.floor === 0 && truckTiles(t).some((q) => q.x === p.x && q.y === p.y);
 }
@@ -182,14 +198,19 @@ function setHintAndRender(text: string, error = false): void {
 }
 
 function startPlacing(truck: Truck): void {
-  placing = { truckId: truck.id, orientation: placing?.orientation ?? 'h' };
-  setHintAndRender(`Click a road or driveway tile to park ${truck.name}. R or right-click rotates, Esc cancels.`);
+  placing = { truckId: truck.id, orientation: placing?.orientation ?? 'h', reversed: placing?.reversed ?? false };
+  setHintAndRender(
+    `Click a road or driveway tile to park ${truck.name}. R or right-click turns it (the arrow and white headlights mark the front, red lights the back). Esc cancels.`,
+  );
 }
 
 function rotatePlacement(): void {
   if (!placing) return;
-  placing.orientation = placing.orientation === 'h' ? 'v' : 'h';
-  render();
+  const i = FACINGS.findIndex((f) => f.orientation === placing!.orientation && f.reversed === placing!.reversed);
+  const next = FACINGS[(i + 1) % FACINGS.length];
+  placing.orientation = next.orientation;
+  placing.reversed = next.reversed;
+  setHintAndRender(`${truckById(placing.truckId)?.name} facing ${next.label}.`);
 }
 
 function doEndTurn(): void {
@@ -517,6 +538,7 @@ function drawAll(time: number): void {
   const placingView = placing && {
     truck: truckById(placing.truckId)!,
     orientation: placing.orientation,
+    reversed: placing.reversed,
     error: hover ? placementError(state, truckById(placing.truckId)!, hover, placing.orientation) : 'no position',
   };
   canvases.forEach((c, f) => {

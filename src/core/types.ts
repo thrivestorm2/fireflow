@@ -134,6 +134,11 @@ export interface Truck {
   /** Top-left tile of the truck, on the ground floor. Set once placed. */
   pos?: Pos;
   orientation: Orientation;
+  /**
+   * Which end is the front (cab). Normally the left (horizontal) or top
+   * (vertical) end; reversed puts it at the right or bottom.
+   */
+  reversed: boolean;
   /** Water in the tank. Arrives full; only refills from a flowing hydrant. */
   water: number;
   maxWater: number;

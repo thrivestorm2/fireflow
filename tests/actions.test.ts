@@ -5,6 +5,7 @@ import { endTurn } from '../src/core/game';
 import { forEachTile } from '../src/core/grid';
 import { hoseLeft } from '../src/core/hoses';
 import { pathTo } from '../src/core/pathing';
+import { seatOf, seatTiles } from '../src/core/trucks';
 import type { GameState, Pos } from '../src/core/types';
 import { miniScenario, run, standAt } from './helpers';
 
@@ -90,6 +91,19 @@ describe('trucks', () => {
     expect(s.trucks[0].water).toBe(20);
     expect(hoseLeft(s, s.trucks[0])).toBe(28);
     expect(s.trucks[1].water).toBe(0);
+  });
+
+  it('crew sit on the truck front seats first, and the front can face either end', () => {
+    let s = run(staged(), place('truck1', 0)); // front (cab) at the left
+    expect(['ff1', 'ff2'].map((id) => seatOf(s, s.units.find((u) => u.id === id)!))).toEqual([P(0, 0), P(0, 1)]);
+    s = run(staged(), { type: 'placeTruck', truckId: 'truck1', pos: P(0, 0), orientation: 'h', reversed: true });
+    expect(s.trucks[0].reversed).toBe(true);
+    expect(seatTiles(s.trucks[0])[0]).toEqual(P(4, 0)); // cab now at the right end
+    expect(seatOf(s, s.units[1])).toEqual(P(4, 1));
+    // Once off the truck, a firefighter no longer has a seat.
+    s = run(s, move('ff1', P(0, 2)));
+    expect(seatOf(s, s.units[0])).toBeUndefined();
+    expect(seatOf(s, s.units[1])).toEqual(P(4, 0));
   });
 
   it('crew stay aboard until the truck parks, then offload next to it', () => {

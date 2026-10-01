@@ -1,6 +1,6 @@
 import { TRUCK_SPECS } from './building';
 import { inBounds, posKey, tileAt } from './grid';
-import type { GameState, Orientation, Pos, Truck, TruckType } from './types';
+import type { GameState, Orientation, Pos, Truck, TruckType, Unit } from './types';
 
 /**
  * Tiles covered by a truck whose top-left tile is `pos`. Horizontal trucks are
@@ -16,6 +16,21 @@ export function footprint(pos: Pos, orientation: Orientation, type: TruckType): 
 
 export function truckTiles(truck: Truck): Pos[] {
   return truck.status === 'placed' && truck.pos ? footprint(truck.pos, truck.orientation, truck.type) : [];
+}
+
+/** A truck's tiles ordered from the front (cab) to the back: where crew sit, front seats first. */
+export function seatTiles(truck: Truck): Pos[] {
+  const along = (p: Pos) => (truck.orientation === 'h' ? p.x : p.y) * (truck.reversed ? -1 : 1);
+  const across = (p: Pos) => (truck.orientation === 'h' ? p.y : p.x);
+  return truckTiles(truck).sort((a, b) => along(a) - along(b) || across(a) - across(b));
+}
+
+/** Where a crew member still aboard is sitting: one seat each, in crew order. */
+export function seatOf(state: GameState, u: Unit): Pos | undefined {
+  const truck = state.trucks.find((t) => t.id === u.aboard);
+  if (!truck) return undefined;
+  const crew = state.units.filter((c) => c.aboard === truck.id && c.status === 'active');
+  return seatTiles(truck)[crew.findIndex((c) => c.id === u.id)];
 }
 
 /** Map of tile key → truck occupying it. */

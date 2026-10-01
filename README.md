@@ -53,14 +53,17 @@ extra AP to climb over (sofas, beds, tables).
 
 Trucks are a limited resource dispatched on a schedule. In the house scenario: Engine 1 on turn 1,
 Ladder 7 on turn 3, Engine 4 on turn 5. A truck that has arrived waits in staging until you **park**
-it: click *Park* and pick a road or driveway tile (R or right-click rotates it).
+it: click *Park* and pick a road or driveway tile. **R** (or right-click) turns it a quarter at a
+time, so the front can face any way. While placing, the arrow and white headlights mark the front (cab)
+and red lights mark the back.
 
 | Truck | Size | Water tank | Hose | Crew |
 |---|---|---|---|---|
 | Engine | 2 × 5 tiles | 20 units | 28 tiles | engine crew (yellow), 4 AP: hoses and hydrants |
 | Ladder | 2 × 7 tiles | — | — | ladder crew (orange), 5 AP: forcible entry, ventilation, ladders, 1 fan |
 
-The crew starts aboard. Select a crew member and click a tile next to the truck to get them off. Units
+The crew rides on the truck, drawn in seats from the cab back. Click a seated firefighter to select
+them, then click a tile next to the truck to get them off. Units
 take up a tile each: they can pass through teammates but can't stop on an occupied tile. Movement and
 actions share the firefighter's AP for the turn.
 
@@ -143,7 +146,7 @@ closed door, or walk to the tile by the shortest path (stairs and ladders includ
 **1** Auto, **2** Move, **3** Spray, **4** Door, **5** Tools, **6** Carry. **Enter** ends the turn,
 **Z** undoes within the turn, **A** / **S** take an attack / supply line, **N** picks up or puts
 down a hose, **B** packs a hose, **Y** hooks up an adjacent hydrant, **G** puts a person down, **E** searches, **P** places or removes a fan, **L**
-raises a ladder, **R** rotates a truck being parked, **H**/**V** toggle the heat/smoke overlays, **Esc** cancels. Hover a tile to inspect
+raises a ladder, **R** turns a truck being parked, **H**/**V** toggle the heat/smoke overlays, **Esc** cancels. Hover a tile to inspect
 its material, contents, condition and temperature. Dashed orange borders mark tiles close to igniting.
 
 ## Architecture

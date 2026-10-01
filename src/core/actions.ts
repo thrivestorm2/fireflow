@@ -25,7 +25,7 @@ export type Action =
   | { type: 'placeFan'; unitId: string; target: Pos } // ladder crew: set a fan blowing through an open door/window
   | { type: 'removeFan'; unitId: string; target: Pos } // take a fan away (target = where it stands)
   | { type: 'search'; unitId: string } // search your tile and the eight around it for victims
-  | { type: 'placeTruck'; truckId: string; pos: Pos; orientation: Orientation };
+  | { type: 'placeTruck'; truckId: string; pos: Pos; orientation: Orientation; reversed?: boolean };
 
 export const COST = {
   move: 1,
@@ -377,6 +377,7 @@ export function performAction(prev: GameState, action: Action): ActionResult {
     const truck = state.trucks.find((t) => t.id === action.truckId)!;
     truck.pos = { ...action.pos, floor: 0 };
     truck.orientation = action.orientation;
+    truck.reversed = !!action.reversed;
     truck.status = 'placed';
     for (const crew of state.units) if (crew.aboard === truck.id) crew.pos = { ...truck.pos };
     log(`${truck.name} parks${truck.water ? ` with ${truck.water} units of water` : ''}.`, 'good');

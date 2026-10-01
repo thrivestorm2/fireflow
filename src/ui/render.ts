@@ -1,7 +1,7 @@
 import { canSprayFrom } from '../core/actions';
 import { AMBIENT, ignitionOf } from '../core/materials';
 import { hydrantAt } from '../core/hoses';
-import { footprint, truckTiles } from '../core/trucks';
+import { footprint, seatOf, truckTiles } from '../core/trucks';
 import type { Fan, GameState, HoseLine, Orientation, Pos, Tile, Truck, Unit } from '../core/types';
 import { fanRunning } from '../core/ventilation';
 
@@ -26,7 +26,7 @@ export interface ViewState {
   mode: string;
   overlay: Overlay;
   time: number;
-  placing?: { truck: Truck; orientation: Orientation; error: string | null };
+  placing?: { truck: Truck; orientation: Orientation; reversed: boolean; error: string | null };
 }
 
 /** Ground floor is shown whole; upper floors are cropped to the building plus a one-tile margin. */
@@ -459,7 +459,12 @@ function hpBar(g: CanvasRenderingContext2D, u: Unit, px: number, py: number): vo
   g.fillRect(px + 3, py + 1, (w * u.hp) / u.maxHp, 3);
 }
 
-function drawTruckShape(g: CanvasRenderingContext2D, truck: Truck, tiles: Pos[], view: ViewRect, alpha: number, crewAboard: number): void {
+/**
+ * Draws a truck over its tiles. The front (cab, windshield, white headlights)
+ * is the left/top end unless the truck is reversed; the back has red tail
+ * lights. While placing, a chevron shows which way it faces.
+ */
+function drawTruckShape(g: CanvasRenderingContext2D, truck: Truck, tiles: Pos[], view: ViewRect, alpha: number, ghost = false): void {
   const S = TILE;
   const xs = tiles.map((p) => (p.x - view.x0) * S);
   const ys = tiles.map((p) => (p.y - view.y0) * S);
@@ -467,66 +472,68 @@ function drawTruckShape(g: CanvasRenderingContext2D, truck: Truck, tiles: Pos[],
   const y = Math.min(...ys) + 2;
   const w = Math.max(...xs) + S - 2 - x;
   const h = Math.max(...ys) + S - 2 - y;
-  const horizontal = w > h;
+  const horizontal = truck.orientation === 'h';
+  const L = horizontal ? w : h; // length, front to back
+  const D = horizontal ? h : w; // width, side to side
+  const dir = truck.reversed ? -1 : 1;
+  const front = horizontal ? (truck.reversed ? x + w : x) : truck.reversed ? y + h : y;
+  /** Point `a` px back from the front and `c` px across from the top/left side. */
+  const at = (a: number, c: number): [number, number] => (horizontal ? [front + dir * a, y + c] : [x + c, front + dir * a]);
+  /** Rectangle between a0..a1 along the truck and c0..c1 across it. */
+  const box = (a0: number, a1: number, c0: number, c1: number, fill: string, r = 0) => {
+    const [x0, y0] = at(a0, c0);
+    const [x1, y1] = at(a1, c1);
+    roundRect(g, Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0), r, fill);
+  };
+
   g.globalAlpha = alpha;
   g.fillStyle = 'rgba(0,0,0,0.35)';
   g.fillRect(x + 3, y + 3, w, h);
   roundRect(g, x, y, w, h, 5, '#c62828');
-  // Cab at the front tile.
-  const cab = horizontal ? { x, y, w: S - 6, h } : { x, y, w, h: S - 6 };
-  roundRect(g, cab.x, cab.y, cab.w, cab.h, 5, '#9a1c1c');
-  g.fillStyle = '#9fd3f0';
-  if (horizontal) g.fillRect(cab.x + 3, cab.y + 4, 5, cab.h - 8);
-  else g.fillRect(cab.x + 4, cab.y + 3, cab.w - 8, 5);
+  box(0, S - 4, 0, D, '#9a1c1c', 5); // cab
+  box(5, 10, 4, D - 4, '#9fd3f0'); // windshield
+  box(0, 3, 3, 9, '#fffde7'); // headlights
+  box(0, 3, D - 9, D - 3, '#fffde7');
+  box(L - 3, L, 3, 8, '#ff1744'); // tail lights
+  box(L - 3, L, D - 8, D - 3, '#ff1744');
+
   if (truck.type === 'ladder') {
     g.strokeStyle = '#e0e0e0';
     g.lineWidth = 2;
     g.beginPath();
-    if (horizontal) {
-      g.moveTo(x + S, y + h / 2 - 5);
-      g.lineTo(x + w - 4, y + h / 2 - 5);
-      g.moveTo(x + S, y + h / 2 + 5);
-      g.lineTo(x + w - 4, y + h / 2 + 5);
-      for (let i = x + S; i < x + w - 4; i += 7) {
-        g.moveTo(i, y + h / 2 - 5);
-        g.lineTo(i, y + h / 2 + 5);
-      }
-    } else {
-      g.moveTo(x + w / 2 - 5, y + S);
-      g.lineTo(x + w / 2 - 5, y + h - 4);
-      g.moveTo(x + w / 2 + 5, y + S);
-      g.lineTo(x + w / 2 + 5, y + h - 4);
-      for (let i = y + S; i < y + h - 4; i += 7) {
-        g.moveTo(x + w / 2 - 5, i);
-        g.lineTo(x + w / 2 + 5, i);
-      }
+    for (const c of [D / 2 - 5, D / 2 + 5]) {
+      g.moveTo(...at(S, c));
+      g.lineTo(...at(L - 6, c));
+    }
+    for (let a = S; a < L - 6; a += 7) {
+      g.moveTo(...at(a, D / 2 - 5));
+      g.lineTo(...at(a, D / 2 + 5));
     }
     g.stroke();
     g.lineWidth = 1;
   } else {
-    g.fillStyle = '#f5f5f5';
-    if (horizontal) g.fillRect(x + S, y + h / 2 - 2, w - S - 4, 4);
-    else g.fillRect(x + w / 2 - 2, y + S, 4, h - S - 4);
+    box(S, L - 6, D / 2 - 2, D / 2 + 2, '#f5f5f5');
+  }
+  if (truck.maxWater > 0) {
+    // Tank gauge along one side.
+    box(S, L - 6, D - 6, D - 2, 'rgba(0,0,0,0.5)');
+    const frac = truck.water / truck.maxWater;
+    if (frac > 0) box(S, S + (L - 6 - S) * frac, D - 6, D - 2, frac > 0.3 ? '#64b5f6' : '#ef5350');
   }
   g.fillStyle = '#fff';
   g.font = 'bold 11px system-ui';
   g.textAlign = 'center';
-  const label = truck.name.replace(/^(\w)\w*\s*/, '$1');
-  g.fillText(label, x + w / 2 + (horizontal ? S / 2 : 0), y + h / 2 + (horizontal ? -8 : S / 2));
-  if (truck.maxWater > 0) {
-    // Tank gauge along the far edge of the truck.
-    const frac = truck.water / truck.maxWater;
-    g.fillStyle = 'rgba(0,0,0,0.5)';
-    if (horizontal) g.fillRect(x + S, y + h - 6, w - S - 4, 4);
-    else g.fillRect(x + w - 6, y + S, 4, h - S - 4);
-    g.fillStyle = frac > 0.3 ? '#64b5f6' : '#ef5350';
-    if (horizontal) g.fillRect(x + S, y + h - 6, (w - S - 4) * frac, 4);
-    else g.fillRect(x + w - 6, y + S, 4, (h - S - 4) * frac);
-  }
-  for (let i = 0; i < crewAboard; i++) {
-    g.fillStyle = HELMET[truck.type];
+  const [lx, ly] = at(L - S, D / 2 - 6);
+  g.fillText(truck.name.replace(/^(\w)\w*\s*/, '$1'), lx, ly + 4);
+
+  if (ghost) {
+    // Chevron pointing the way the truck faces.
+    g.fillStyle = '#ffffff';
     g.beginPath();
-    g.arc(x + w / 2 + (horizontal ? S / 2 : 0) + (i - (crewAboard - 1) / 2) * 7, y + h / 2 + (horizontal ? 9 : S / 2 + 10), 3, 0, Math.PI * 2);
+    g.moveTo(...at(S + 2, D / 2));
+    g.lineTo(...at(S + 14, D / 2 - 9));
+    g.lineTo(...at(S + 14, D / 2 + 9));
+    g.closePath();
     g.fill();
   }
   g.globalAlpha = 1;
@@ -589,8 +596,7 @@ export function drawFloor(g: CanvasRenderingContext2D, state: GameState, floor: 
     for (const truck of state.trucks) {
       const tiles = truckTiles(truck);
       if (!tiles.length) continue;
-      const aboard = state.units.filter((u) => u.aboard === truck.id && u.status === 'active').length;
-      drawTruckShape(g, truck, tiles, rect, 1, aboard);
+      drawTruckShape(g, truck, tiles, rect, 1);
     }
   }
 
@@ -626,6 +632,13 @@ export function drawFloor(g: CanvasRenderingContext2D, state: GameState, floor: 
 
   for (const fan of state.fans) if (inView(fan.pos)) drawFan(g, state, fan, px(fan.pos.x), py(fan.pos.y), view.time);
 
+  // Crew still aboard sit on their truck, front seats first, and can be clicked like anyone else.
+  for (const u of state.units) {
+    if (!u.aboard || u.status !== 'active') continue;
+    const seat = seatOf(state, u);
+    if (seat && inView(seat)) drawUnit(g, u, px(seat.x), py(seat.y), sel?.id === u.id);
+  }
+
   for (const u of state.units) {
     if (u.status === 'rescued' || u.aboard || u.carriedBy || !inView(u.pos)) continue;
     if (u.kind === 'civilian' && !u.found) continue; // nobody has found them yet
@@ -637,7 +650,7 @@ export function drawFloor(g: CanvasRenderingContext2D, state: GameState, floor: 
   if (view.placing && view.hover && floor === 0) {
     const tiles = footprint(view.hover, view.placing.orientation, view.placing.truck.type).filter(inView);
     if (tiles.length) {
-      drawTruckShape(g, view.placing.truck, tiles, rect, 0.6, 0);
+      drawTruckShape(g, { ...view.placing.truck, orientation: view.placing.orientation, reversed: view.placing.reversed }, tiles, rect, 0.7, true);
       g.strokeStyle = view.placing.error ? '#ef5350' : '#66bb6a';
       g.lineWidth = 3;
       for (const p of tiles) g.strokeRect(px(p.x) + 2, py(p.y) + 2, S - 4, S - 4);

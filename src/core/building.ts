@@ -143,6 +143,7 @@ export function buildState(scenario: Scenario): GameState {
     arrivalTurn: d.arrivalTurn,
     status: 'enroute',
     orientation: 'h',
+    reversed: false,
     water: TRUCK_SPECS[d.type].water,
     maxWater: TRUCK_SPECS[d.type].water,
     hose: TRUCK_SPECS[d.type].hose,
