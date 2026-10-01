@@ -1,7 +1,7 @@
-import { canSprayFrom } from '../core/actions';
+import { canSprayFrom, nozzleRange } from '../core/actions';
 import { AMBIENT, ignitionOf } from '../core/materials';
 import { hydrantAt } from '../core/hoses';
-import { footprint, seatOf, truckTiles } from '../core/trucks';
+import { dischargeTiles, footprint, seatOf, truckTiles } from '../core/trucks';
 import type { Fan, GameState, HoseLine, Orientation, Pos, Tile, Truck, Unit } from '../core/types';
 import { fanRunning } from '../core/ventilation';
 
@@ -597,6 +597,7 @@ export function drawFloor(g: CanvasRenderingContext2D, state: GameState, floor: 
       const tiles = truckTiles(truck);
       if (!tiles.length) continue;
       drawTruckShape(g, truck, tiles, rect, 1);
+      drawCouplings(g, state, truck, rect, view);
     }
   }
 
@@ -615,11 +616,12 @@ export function drawFloor(g: CanvasRenderingContext2D, state: GameState, floor: 
       }
     }
     const nozzle = state.hoses.find((l) => l.id === sel.line && l.kind === 'attack');
+    const reach = nozzleRange(state, sel);
     if ((view.mode === 'spray' || view.mode === 'auto') && nozzle && sel.pos.floor === floor) {
       for (let y = rect.y0; y < rect.y0 + rect.rows; y++) {
         for (let x = rect.x0; x < rect.x0 + rect.cols; x++) {
           const t = state.floors[floor][y][x];
-          if ((view.mode === 'spray' || t.fire > 0) && !canSprayFrom(state, sel.pos, { floor, x, y })) {
+          if ((view.mode === 'spray' || t.fire > 0) && !canSprayFrom(state, sel.pos, { floor, x, y }, reach)) {
             g.strokeStyle = t.fire > 0 ? '#2196f3' : 'rgba(33,150,243,0.5)';
             g.lineWidth = 2;
             g.strokeRect(px(x) + 2, py(y) + 2, S - 4, S - 4);
@@ -665,8 +667,9 @@ export function drawFloor(g: CanvasRenderingContext2D, state: GameState, floor: 
 }
 
 
-/** Supply lines are yellow 5" LDH (large-diameter hose); attack lines are blue. */
-const HOSE_COLOR = { attack: '#42a5f5', supply: '#fdd835' } as const;
+/** 1¾″ attack lines are red, 2½″ attack lines blue, 5″ LDH supply lines yellow. */
+export const HOSE_COLOR = { '1.75': '#e53935', '2.5': '#1e88e5', '5': '#fdd835' } as const;
+const HOSE_WIDTH = { '1.75': 3, '2.5': 5, '5': 8 } as const;
 
 /** Hose lines: blue attack lines, thick yellow 5" supply lines. Dashed when no water is behind them. */
 function drawHoses(g: CanvasRenderingContext2D, state: GameState, floor: number, rect: ViewRect, time: number): void {
@@ -678,14 +681,12 @@ function drawHoses(g: CanvasRenderingContext2D, state: GameState, floor: number,
     if (!truck) return;
     const off = ((i % 3) - 1) * 4;
     const pts: (Pos | null)[] = [];
-    // Start at the truck tile nearest the first hose tile.
-    const first = line.tiles[0];
-    const start = truckTiles(truck).sort((a, b) => Math.abs(a.x - first.x) + Math.abs(a.y - first.y) - (Math.abs(b.x - first.x) + Math.abs(b.y - first.y)))[0];
-    if (start && first.floor === floor && floor === 0) pts.push(start);
+    // Start at the coupling on the truck.
+    if (line.tiles[0].floor === floor && floor === 0) pts.push(line.origin);
     for (const p of line.tiles) pts.push(p.floor === floor ? p : null);
     const charged = line.kind === 'supply' ? isSupplyCharged(state, line) : truck.water > 0;
-    g.strokeStyle = HOSE_COLOR[line.kind];
-    g.lineWidth = line.kind === 'supply' ? 8 : charged ? 4 : 3;
+    g.strokeStyle = HOSE_COLOR[line.size];
+    g.lineWidth = HOSE_WIDTH[line.size] + (charged ? 1 : 0);
     g.lineCap = 'round';
     g.lineJoin = 'round';
     if (!charged) g.setLineDash([7, 5]);
@@ -723,13 +724,13 @@ function drawHoses(g: CanvasRenderingContext2D, state: GameState, floor: number,
       g.fill();
       g.stroke();
       if (!line.holder) {
-        g.strokeStyle = HOSE_COLOR.attack;
+        g.strokeStyle = HOSE_COLOR[line.size];
         g.beginPath();
         g.arc(cx(end) + off, cy(end) + off, 8, 0, Math.PI * 2);
         g.stroke();
       }
     } else if (line.kind === 'supply' && !line.hydrant && !line.holder && end.floor === floor) {
-      g.strokeStyle = HOSE_COLOR.supply;
+      g.strokeStyle = HOSE_COLOR[line.size];
       g.beginPath();
       g.arc(cx(end) + off, cy(end) + off, 8, 0, Math.PI * 2);
       g.stroke();
@@ -798,5 +799,43 @@ function drawFan(g: CanvasRenderingContext2D, state: GameState, fan: Fan, px: nu
     g.lineTo(cx + dx * 17 + dy * 4, cy + dy * 17 + dx * 4);
     g.stroke();
     g.lineWidth = 1;
+  }
+}
+
+/**
+ * An engine's hose connections, halfway down each long side: a red 1¾″ coupling
+ * toward the front and a blue 2½″ one toward the back. Greyed out when that
+ * line is in use; outlined when the selected firefighter can take it.
+ */
+function drawCouplings(g: CanvasRenderingContext2D, state: GameState, truck: Truck, rect: ViewRect, view: ViewState): void {
+  const S = TILE;
+  const sel = view.selected;
+  for (const d of dischargeTiles(truck)) {
+    const px = (d.pos.x - rect.x0) * S;
+    const py = (d.pos.y - rect.y0) * S;
+    roundRect(g, px + 3, py + 3, S - 6, S - 6, 4, '#37474f');
+    const towardFront = truck.reversed ? 1 : -1;
+    const reachable = !!sel && !sel.aboard && !sel.line && sel.pos.floor === 0 && Math.abs(sel.pos.x - d.pos.x) + Math.abs(sel.pos.y - d.pos.y) === 1;
+    for (const size of ['1.75', '2.5'] as const) {
+      const shift = (size === '1.75' ? 1 : -1) * towardFront * (S / 4);
+      const cx = px + S / 2 + (truck.orientation === 'h' ? shift : 0);
+      const cy = py + S / 2 + (truck.orientation === 'v' ? shift : 0);
+      const inUse = state.hoses.some((l) => l.truckId === truck.id && l.kind === 'attack' && l.side === d.side && l.size === size);
+      g.fillStyle = inUse ? '#616161' : HOSE_COLOR[size];
+      g.beginPath();
+      g.arc(cx, cy, size === '2.5' ? 6 : 5, 0, Math.PI * 2);
+      g.fill();
+      g.strokeStyle = '#cfd8dc';
+      g.lineWidth = 1.5;
+      g.stroke();
+      if (reachable && !inUse) {
+        g.strokeStyle = `rgba(255,255,255,${0.6 + 0.4 * Math.sin(view.time / 200)})`;
+        g.lineWidth = 2;
+        g.beginPath();
+        g.arc(cx, cy, 9, 0, Math.PI * 2);
+        g.stroke();
+      }
+      g.lineWidth = 1;
+    }
   }
 }

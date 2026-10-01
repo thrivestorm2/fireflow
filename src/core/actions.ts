@@ -1,11 +1,11 @@
 import { floorName } from './fire';
 import { evaluate } from './game';
 import { DIRS, isAdjacent, isOpenAir, isOutside, isWalkable, neighbors, posKey, samePos, tileAt } from './grid';
-import { extendLine, HOSE, hoseLeft, hydrantAt, hydrantWorkAvailable, HYDRANT_TOTAL, linesThrough, workHydrant } from './hoses';
+import { extendLine, HOSE, HOSE_SIZES, hoseLeft, hydrantAt, hydrantWorkAvailable, HYDRANT_TOTAL, linesThrough, workHydrant } from './hoses';
 import { CONTENTS } from './materials';
 import { searchAround, searchCost, SEARCH, spotVictims } from './search';
-import { besideTruck, enginesNear, placementError, truckOccupancy, truckTiles } from './trucks';
-import type { GameState, HoseKind, HoseLine, LogEntry, Orientation, Pos, Truck, Unit } from './types';
+import { besideTruck, dischargeTiles, enginesNear, placementError, truckOccupancy, truckTiles } from './trucks';
+import type { GameState, HoseKind, HoseLine, HoseSize, LogEntry, Orientation, Pos, Truck, Unit } from './types';
 
 export type Action =
   | { type: 'move'; unitId: string; path: Pos[] } // walk a path; may start from the unit's truck
@@ -14,7 +14,8 @@ export type Action =
   | { type: 'breach'; unitId: string; target: Pos } // axe through a drywall wall, door or window
   | { type: 'pickup'; unitId: string; target: Pos }
   | { type: 'drop'; unitId: string }
-  | { type: 'takeLine'; unitId: string; kind: HoseKind } // pull a hose off an adjacent engine
+  /** Pull a hose off an engine. Attack lines come from the coupling beside you (size defaults to 1¾″). */
+  | { type: 'takeLine'; unitId: string; kind: HoseKind; size?: HoseSize; side?: 0 | 1 }
   | { type: 'dropLine'; unitId: string } // put the nozzle/hose end down where you stand
   | { type: 'pickupLine'; unitId: string } // pick up a hose end lying on your tile
   | { type: 'returnLine'; unitId: string } // pack the line you hold back onto its engine
@@ -51,13 +52,15 @@ export const COST = {
   removeFan: 1,
   /** Extra AP to spray from a smoky tile, and again from thick smoke. */
   smokySpray: 1,
+  /** Laying out a new tile of heavy (2½″) hose costs this much extra. */
+  heavyHose: HOSE_SIZES['2.5'].advanceExtra,
 } as const;
 
 /** Jobs only a ladder (truck) company does. */
 const LADDER_JOBS = new Set<Action['type']>(['breach', 'force', 'cutRoof', 'placeFan', 'ladder']);
 
-/** Each spray uses one unit of water from the engine feeding the line. */
-export const SPRAY = { range: 3, smokyRange: 2, knockdown: 2, cooling: 320, splashCooling: 80, wetTurns: 2, water: 1 } as const;
+/** Spray strength, water use and reach depend on the hose size (HOSE_SIZES); thick smoke cuts the reach by one. */
+export const SPRAY = { wetTurns: 2, thickSmokeRangeLoss: 1 } as const;
 export const THICK_SMOKE = 60;
 
 /** Precomputed blockers, so pathfinding doesn't rebuild them per step. */
@@ -123,9 +126,15 @@ export function moveOrigins(state: GameState, u: Unit): Pos[] {
   return truck ? truckTiles(truck) : [];
 }
 
-/** Thick smoke at the nozzle means the crew can't see far enough to hit distant fire. */
-export function sprayRange(state: GameState, from: Pos): number {
-  return (tileAt(state, from)?.smoke ?? 0) >= THICK_SMOKE ? SPRAY.smokyRange : SPRAY.range;
+/** Reach of a hose; thick smoke at the nozzle means the crew can't see far enough to hit distant fire. */
+export function sprayRange(state: GameState, from: Pos, size: HoseSize = '1.75'): number {
+  const base = HOSE_SIZES[size].range;
+  return (tileAt(state, from)?.smoke ?? 0) >= THICK_SMOKE ? base - SPRAY.thickSmokeRangeLoss : base;
+}
+
+/** Reach of the nozzle a firefighter is holding. */
+export function nozzleRange(state: GameState, u: Unit): number {
+  return sprayRange(state, u.pos, lineOf(state, u)?.size);
 }
 
 export function sprayCost(state: GameState, from: Pos): number {
@@ -140,7 +149,7 @@ export function canSprayFrom(state: GameState, from: Pos, target: Pos, range = s
   if (dx !== 0 && dy !== 0) return 'Spray only in straight lines';
   const dist = Math.abs(target.x - from.x) + Math.abs(target.y - from.y);
   if (dist === 0) return 'Cannot spray your own tile';
-  if (dist > range) return `Out of range (max ${range}${range < SPRAY.range ? ' in thick smoke' : ''})`;
+  if (dist > range) return `Out of range (max ${range})`;
   for (let i = 1; i < dist; i++) {
     const t = tileAt(state, { floor: from.floor, x: from.x + dx * i, y: from.y + dy * i });
     if (!t || !isOpenAir(t)) return 'Line of fire is blocked';
@@ -204,6 +213,7 @@ export function pathCost(state: GameState, u: Unit, path: Pos[]): number | strin
     if (typeof c === 'string') return c;
     total += c;
   }
+  total += heavyHoseExtra(state, u, path);
   if (block.units.has(posKey(path[path.length - 1]))) return 'That spot is taken';
   const line = lineOf(state, u);
   if (line) {
@@ -212,6 +222,35 @@ export function pathCost(state: GameState, u: Unit, path: Pos[]): number | strin
     if (extra > hoseLeft(state, truck)) return `Not enough hose — ${hoseLeft(state, truck)} tiles left on ${truck.name}`;
   }
   return total;
+}
+
+/** Extra AP for advancing a heavy (2½″) line: every tile of new hose laid costs more; walking back along it doesn't. */
+export function heavyHoseExtra(state: GameState, u: Unit, path: Pos[]): number {
+  const line = lineOf(state, u);
+  const extra = line ? HOSE_SIZES[line.size].advanceExtra : 0;
+  if (!extra) return 0;
+  const laid = new Set(line!.tiles.map(posKey));
+  return path.filter((p) => !laid.has(posKey(p))).length * extra;
+}
+
+/** The engine coupling a firefighter would take an attack line from, or why they can't. */
+export function attackSource(state: GameState, u: Unit, size: HoseSize, side?: 0 | 1): { engine: Truck; side: 0 | 1; origin: Pos } | string {
+  let busy = false;
+  for (const engine of state.trucks) {
+    for (const d of dischargeTiles(engine)) {
+      if (side !== undefined && d.side !== side) continue;
+      if (!isAdjacent(u.pos, d.pos)) continue;
+      if (state.hoses.some((l) => l.truckId === engine.id && l.kind === 'attack' && l.side === d.side && l.size === size)) {
+        busy = true;
+        continue;
+      }
+      if (hoseLeft(state, engine) <= 0) return `${engine.name} is out of hose`;
+      return { engine, side: d.side, origin: d.pos };
+    }
+  }
+  return busy
+    ? `The ${HOSE_SIZES[size].label} line on this side is already in use`
+    : "Stand beside an engine's hose connections, halfway down a long side";
 }
 
 /** AP cost of an action (0 for truck placement), or the reason it cannot be performed. */
@@ -245,8 +284,8 @@ export function actionCost(state: GameState, action: Action): number | string {
     case 'spray': {
       if (!line || line.kind !== 'attack') return 'Needs an attack line — take one from an engine';
       const truck = state.trucks.find((t) => t.id === line.truckId)!;
-      if (truck.water < SPRAY.water) return `${truck.name} is out of water — supply it from a hydrant`;
-      cost = canSprayFrom(state, u.pos, action.target) ?? sprayCost(state, u.pos);
+      if (truck.water < HOSE_SIZES[line.size].water) return `${truck.name} is out of water — supply it from a hydrant`;
+      cost = canSprayFrom(state, u.pos, action.target, nozzleRange(state, u)) ?? sprayCost(state, u.pos);
       break;
     }
     case 'toggle': {
@@ -282,11 +321,17 @@ export function actionCost(state: GameState, action: Action): number | string {
     case 'takeLine': {
       if (line) return 'Already holding a hose';
       if (u.carrying) return 'Hands full — put the person down first';
-      const engines = enginesNear(state, u.pos);
-      if (!engines.length) return 'Must be next to an engine';
-      const max = action.kind === 'attack' ? HOSE.maxAttackLines : HOSE.maxSupplyLines;
-      const engine = engines.find((e) => hoseLeft(state, e) > 0 && state.hoses.filter((l) => l.truckId === e.id && l.kind === action.kind).length < max);
-      if (!engine) return `No ${action.kind} line available — out of hose or lines in use`;
+      if (action.kind === 'attack') {
+        const src = attackSource(state, u, action.size ?? '1.75', action.side);
+        if (typeof src === 'string') return src;
+      } else {
+        const engines = enginesNear(state, u.pos);
+        if (!engines.length) return 'Must be next to an engine';
+        const engine = engines.find(
+          (e) => hoseLeft(state, e) > 0 && state.hoses.filter((l) => l.truckId === e.id && l.kind === 'supply').length < HOSE.maxSupplyLines,
+        );
+        if (!engine) return 'No supply line available — out of hose or already in use';
+      }
       cost = COST.takeLine;
       break;
     }
@@ -419,15 +464,16 @@ export function performAction(prev: GameState, action: Action): ActionResult {
       break;
     }
     case 'spray': {
-      state.trucks.find((t) => t.id === line!.truckId)!.water -= SPRAY.water;
+      const hose = HOSE_SIZES[line!.size];
+      state.trucks.find((t) => t.id === line!.truckId)!.water -= hose.water;
       const t = tileAt(state, action.target)!;
       const wasBurning = t.fire > 0;
-      t.fire = Math.max(0, t.fire - SPRAY.knockdown);
-      t.temperature = Math.max(20, t.temperature - SPRAY.cooling);
+      t.fire = Math.max(0, t.fire - hose.knockdown);
+      t.temperature = Math.max(20, t.temperature - hose.cooling);
       t.wet = SPRAY.wetTurns;
       for (const n of neighbors(state, action.target)) {
         const nt = tileAt(state, n)!;
-        nt.temperature = Math.max(20, nt.temperature - SPRAY.splashCooling);
+        nt.temperature = Math.max(20, nt.temperature - hose.splashCooling);
       }
       if (wasBurning && t.fire === 0) log(`${u.name} knocks down a fire.`, 'good');
       break;
@@ -466,14 +512,22 @@ export function performAction(prev: GameState, action: Action): ActionResult {
       break;
     }
     case 'takeLine': {
-      const max = action.kind === 'attack' ? HOSE.maxAttackLines : HOSE.maxSupplyLines;
-      const engine = enginesNear(state, u.pos).find(
-        (e) => hoseLeft(state, e) > 0 && state.hoses.filter((l) => l.truckId === e.id && l.kind === action.kind).length < max,
-      )!;
       const id = `line${state.nextLineId++}`;
-      state.hoses.push({ id, truckId: engine.id, kind: action.kind, tiles: [{ ...u.pos }], holder: u.id });
+      if (action.kind === 'attack') {
+        const size = action.size ?? '1.75';
+        const src = attackSource(state, u, size, action.side) as Exclude<ReturnType<typeof attackSource>, string>;
+        state.hoses.push({ id, truckId: src.engine.id, kind: 'attack', size, side: src.side, origin: src.origin, tiles: [{ ...u.pos }], holder: u.id });
+        log(`${u.name} pulls a ${HOSE_SIZES[size].label} attack line off ${src.engine.name}.`);
+      } else {
+        const engine = enginesNear(state, u.pos).find(
+          (e) => hoseLeft(state, e) > 0 && state.hoses.filter((l) => l.truckId === e.id && l.kind === 'supply').length < HOSE.maxSupplyLines,
+        )!;
+        const near = (p: Pos) => Math.abs(p.x - u.pos.x) + Math.abs(p.y - u.pos.y);
+        const origin = truckTiles(engine).sort((a, b) => near(a) - near(b))[0];
+        state.hoses.push({ id, truckId: engine.id, kind: 'supply', size: '5', origin, tiles: [{ ...u.pos }], holder: u.id });
+        log(`${u.name} pulls the 5″ supply line off ${engine.name}.`);
+      }
       u.line = id;
-      log(`${u.name} pulls ${action.kind === 'attack' ? 'an attack line' : 'a supply line'} off ${engine.name}.`);
       break;
     }
     case 'dropLine':

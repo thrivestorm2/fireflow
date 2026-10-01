@@ -33,6 +33,20 @@ export function seatOf(state: GameState, u: Unit): Pos | undefined {
   return seatTiles(truck)[crew.findIndex((c) => c.id === u.id)];
 }
 
+/**
+ * An engine's hose connections: the middle tile of each long side. Each has a
+ * 1¾″ and a 2½″ attack line coupling.
+ */
+export function dischargeTiles(truck: Truck): { side: 0 | 1; pos: Pos }[] {
+  if (truck.type !== 'engine') return [];
+  const tiles = seatTiles(truck); // front to back, two per row across
+  const mid = Math.floor(tiles.length / 4) * 2;
+  return [
+    { side: 0, pos: tiles[mid] },
+    { side: 1, pos: tiles[mid + 1] },
+  ].filter((d): d is { side: 0 | 1; pos: Pos } => !!d.pos);
+}
+
 /** Map of tile key → truck occupying it. */
 export function truckOccupancy(state: GameState): Map<string, Truck> {
   const m = new Map<string, Truck>();

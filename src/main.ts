@@ -4,9 +4,9 @@ import { endTurn, newGame, summarize } from './core/game';
 import { conditions, isAdjacent, neighbors, samePos, tileAt } from './core/grid';
 import { CONTENTS, ignitionOf, MATERIALS } from './core/materials';
 import { reachable } from './core/pathing';
-import { HYDRANT_LABEL, HYDRANT_TOTAL, hoseLeft, hydrantAt, linesThrough, supplyFor } from './core/hoses';
-import { placementError, seatOf, truckTiles } from './core/trucks';
-import type { GameState, Orientation, Pos, Truck, Unit } from './core/types';
+import { HOSE_SIZES, HYDRANT_LABEL, HYDRANT_TOTAL, hoseLeft, hydrantAt, linesThrough, supplyFor } from './core/hoses';
+import { dischargeTiles, placementError, seatOf, truckTiles } from './core/trucks';
+import type { GameState, HoseSize, Orientation, Pos, Truck, Unit } from './core/types';
 import { houseFire } from './scenarios/house';
 import { MODES, planClick, type Mode } from './ui/intent';
 import { drawFloor, TILE, viewRect, type Overlay, type ViewRect } from './ui/render';
@@ -79,7 +79,7 @@ function buildFloors(): void {
     });
     canvas.addEventListener('click', (e) => {
       const p = eventPos(canvas, f, e);
-      if (p) onTileClick(p);
+      if (p) onTileClick(p, tileFraction(canvas, f, e));
     });
     canvas.addEventListener('contextmenu', (e) => {
       if (!placing) return;
@@ -118,6 +118,30 @@ function eventPos(canvas: HTMLCanvasElement, floor: number, e: MouseEvent): Pos 
   return x >= v.x0 && y >= v.y0 && x < v.x0 + v.cols && y < v.y0 + v.rows ? { floor, x, y } : undefined;
 }
 
+/** Where inside its tile a click landed, 0..1 on each axis. */
+function tileFraction(canvas: HTMLCanvasElement, floor: number, e: MouseEvent): { fx: number; fy: number } {
+  const r = canvas.getBoundingClientRect();
+  const v = rects[floor];
+  const gx = ((e.clientX - r.left) / r.width) * v.cols;
+  const gy = ((e.clientY - r.top) / r.height) * v.rows;
+  return { fx: gx - Math.floor(gx), fy: gy - Math.floor(gy) };
+}
+
+/**
+ * A click on an engine's hose connections: the half toward the front is the
+ * red 1¾″ coupling, the half toward the back the blue 2½″.
+ */
+function couplingClick(p: Pos, frac: { fx: number; fy: number }): { size: HoseSize; side: 0 | 1 } | undefined {
+  for (const truck of state.trucks) {
+    const d = dischargeTiles(truck).find((d) => samePos(d.pos, p));
+    if (!d) continue;
+    const along = truck.orientation === 'h' ? frac.fx : frac.fy;
+    const frontHalf = truck.reversed ? along >= 0.5 : along < 0.5;
+    return { size: frontHalf ? '1.75' : '2.5', side: d.side };
+  }
+  return undefined;
+}
+
 // ---------------------------------------------------------------- actions
 
 function commit(actions: Action[]): boolean {
@@ -141,7 +165,7 @@ function commit(actions: Action[]): boolean {
   return !error;
 }
 
-function onTileClick(p: Pos): void {
+function onTileClick(p: Pos, frac = { fx: 0.5, fy: 0.5 }): void {
   if (state.status !== 'playing') return;
 
   if (placing) {
@@ -157,6 +181,12 @@ function onTileClick(p: Pos): void {
 
   const own = firefighters().find((u) => u.status === 'active' && !u.aboard && u.pos.floor === p.floor && u.pos.x === p.x && u.pos.y === p.y);
   const sel = selected();
+  // Clicking a hose coupling with a firefighter beside it takes that attack line.
+  const coupling = couplingClick(p, frac);
+  if (coupling && sel && !sel.aboard) {
+    commit([{ type: 'takeLine', unitId: sel.id, kind: 'attack', size: coupling.size, side: coupling.side }]);
+    return;
+  }
   // Clicking another firefighter selects them, unless an explicit mode targets that tile.
   if (own && (!sel || (own.id !== sel.id && (mode === 'auto' || mode === 'move')))) {
     selectedId = own.id;
@@ -255,8 +285,8 @@ function setMode(m: Mode): void {
   setHintAndRender(MODES.find((x) => x.mode === m)!.hint);
 }
 
-type UnitButton = 'drop' | 'attack' | 'supply' | 'nozzle' | 'pack' | 'hydrant' | 'ladder' | 'search' | 'fan';
-const UNIT_BUTTONS: UnitButton[] = ['drop', 'attack', 'supply', 'nozzle', 'pack', 'hydrant', 'ladder', 'search', 'fan'];
+type UnitButton = 'drop' | 'attack' | 'attack25' | 'supply' | 'nozzle' | 'pack' | 'hydrant' | 'ladder' | 'search' | 'fan';
+const UNIT_BUTTONS: UnitButton[] = ['drop', 'attack', 'attack25', 'supply', 'nozzle', 'pack', 'hydrant', 'ladder', 'search', 'fan'];
 
 /** The action behind each side-panel button, for the selected firefighter. */
 function buttonAction(kind: UnitButton, u: Unit): Action | undefined {
@@ -276,8 +306,11 @@ function buttonAction(kind: UnitButton, u: Unit): Action | undefined {
       return opening && { type: 'placeFan', unitId: u.id, target: opening };
     }
     case 'attack':
+      return { type: 'takeLine', unitId: u.id, kind: 'attack', size: '1.75' };
+    case 'attack25':
+      return { type: 'takeLine', unitId: u.id, kind: 'attack', size: '2.5' };
     case 'supply':
-      return { type: 'takeLine', unitId: u.id, kind };
+      return { type: 'takeLine', unitId: u.id, kind: 'supply' };
     case 'nozzle':
       return { type: u.line ? 'dropLine' : 'pickupLine', unitId: u.id };
     case 'pack':
@@ -326,7 +359,7 @@ function crewCard(u: Unit): HTMLButtonElement {
   const where = u.aboard ? 'aboard' : u.pos.floor === 0 ? 'ground floor' : `floor ${u.pos.floor + 1}`;
   const held = state.hoses.find((l) => l.id === u.line);
   const water = held
-    ? `${held.kind === 'attack' ? '🧯 attack line' : '🟡 5″ supply line'} (${truckById(held.truckId)?.name}) · `
+    ? `${held.kind === 'attack' ? `🧯 ${HOSE_SIZES[held.size].label} attack line` : '🟡 5″ supply line'} (${truckById(held.truckId)?.name}) · `
     : u.role === 'ladder'
       ? '🪜 '
       : '';
@@ -484,7 +517,7 @@ function hydrantInfo(p: Pos): string {
 function hoseInfo(p: Pos): string {
   const lines = linesThrough(state, p);
   if (!lines.length) return '';
-  const desc = lines.map((l) => `${l.kind} line from ${truckById(l.truckId)?.name}`).join(', ');
+  const desc = lines.map((l) => `${HOSE_SIZES[l.size].label} ${l.kind} line from ${truckById(l.truckId)?.name}`).join(', ');
   return `<dt>Hose</dt><dd>${desc}</dd>`;
 }
 
@@ -603,6 +636,8 @@ window.addEventListener('keydown', (e) => {
       return rotatePlacement();
     case 'a':
       return unitAction('attack');
+    case 'd':
+      return unitAction('attack25');
     case 's':
       return unitAction('supply');
     case 'n':

@@ -1,10 +1,23 @@
 import { posKey, samePos } from './grid';
 import type { SimSystem } from './systems';
-import type { GameState, HoseLine, Hydrant, HydrantState, LogEntry, Pos, Truck, Unit } from './types';
+import type { GameState, HoseLine, HoseSize, Hydrant, HydrantState, LogEntry, Pos, Truck, Unit } from './types';
+
+/**
+ * What each hose does. Attack lines: 1¾″ is light and quick; 2½″ moves more
+ * water, hits harder, cools the room faster and reaches further, but uses
+ * twice the water and is slow to advance.
+ */
+export const HOSE_SIZES: Record<HoseSize, { label: string; water: number; knockdown: number; cooling: number; splashCooling: number; range: number; advanceExtra: number }> = {
+  '1.75': { label: '1¾″', water: 1, knockdown: 2, cooling: 320, splashCooling: 80, range: 3, advanceExtra: 0 },
+  '2.5': { label: '2½″', water: 2, knockdown: 3, cooling: 480, splashCooling: 180, range: 4, advanceExtra: 1 },
+  '5': { label: '5″ LDH', water: 0, knockdown: 0, cooling: 0, splashCooling: 0, range: 0, advanceExtra: 0 },
+};
+
+/** Attack line sizes on each side of an engine: one of each. */
+export const ATTACK_SIZES: HoseSize[] = ['1.75', '2.5'];
 
 export const HOSE = {
-  /** Attack lines (into the fire) and supply lines (to a hydrant) per engine. */
-  maxAttackLines: 2,
+  /** Supply lines (to a hydrant) per engine. Attack lines are limited by the couplings: one of each size per side. */
   maxSupplyLines: 1,
   /** Water units a flowing hydrant adds to its engine's tank each turn. */
   hydrantRefill: 8,

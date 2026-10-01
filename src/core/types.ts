@@ -159,12 +159,19 @@ export interface Fan {
 }
 
 export type HoseKind = 'attack' | 'supply';
+/** Hose diameter in inches: 1¾″ and 2½″ attack lines, 5″ large-diameter supply hose. */
+export type HoseSize = '1.75' | '2.5' | '5';
 
 /** A hose stretched from a truck. `tiles` runs from the truck outwards; the last tile is the open end. */
 export interface HoseLine {
   id: string;
   truckId: string;
   kind: HoseKind;
+  size: HoseSize;
+  /** Attack lines: which long side of the engine they connect to (0 = top/left row, 1 = the other). */
+  side?: 0 | 1;
+  /** The truck tile the hose is coupled to. */
+  origin: Pos;
   tiles: Pos[];
   /** Firefighter holding the open end, if any. */
   holder?: string;

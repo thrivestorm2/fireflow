@@ -40,7 +40,7 @@ describe('game flow', () => {
       }),
     );
     s = standAt(s, 'ff1', 2, 1);
-    s.hoses.push({ id: 'line1', truckId: 'truck1', kind: 'attack', tiles: [{ floor: 0, x: 2, y: 1 }], holder: 'ff1' });
+    s.hoses.push({ id: 'line1', truckId: 'truck1', kind: 'attack', size: '1.75', origin: { floor: 0, x: 0, y: 0 }, tiles: [{ floor: 0, x: 2, y: 1 }], holder: 'ff1' });
     s.units[0].line = 'line1';
     const r = performAction(s, { type: 'spray', unitId: 'ff1', target: { floor: 0, x: 3, y: 1 } });
     expect(r.state.status).toBe('won');

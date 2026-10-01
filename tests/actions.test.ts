@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { performAction, type Action } from '../src/core/actions';
 import { buildState } from '../src/core/building';
 import { endTurn } from '../src/core/game';
-import { forEachTile } from '../src/core/grid';
+import { forEachTile, tileAt } from '../src/core/grid';
 import { hoseLeft } from '../src/core/hoses';
 import { pathTo } from '../src/core/pathing';
 import { seatOf, seatTiles } from '../src/core/trucks';
@@ -119,42 +119,54 @@ describe('trucks', () => {
 });
 
 describe('hoses', () => {
-  it('a line is pulled from an adjacent engine and follows its holder', () => {
-    let s = run(parked(), move('ff1', P(3, 2)));
-    s = run(s, { type: 'takeLine', unitId: 'ff1', kind: 'attack' }, { type: 'toggle', unitId: 'ff1', target: P(3, 3) });
+  // The engine parked at x 0..4 has its hose connections at x 2: (2,1) faces the sidewalk at (2,2).
+  const take = (size: '1.75' | '2.5' = '1.75', unitId = 'ff1'): Action => ({ type: 'takeLine', unitId, kind: 'attack', size });
+
+  it('attack lines come off the connections halfway down the engine and follow their holder', () => {
+    let s = run(parked(), move('ff1', P(2, 2)), take(), move('ff1', P(3, 2)), { type: 'toggle', unitId: 'ff1', target: P(3, 3) });
     s = fresh(s);
     s = run(s, move('ff1', P(3, 3), P(3, 4)));
-    expect(s.hoses[0].tiles).toEqual([P(3, 2), P(3, 3), P(3, 4)]);
-    expect(hoseLeft(s, s.trucks[0])).toBe(25);
+    expect(s.hoses[0]).toMatchObject({ size: '1.75', side: 1, origin: P(2, 1) });
+    expect(s.hoses[0].tiles).toEqual([P(2, 2), P(3, 2), P(3, 3), P(3, 4)]);
+    expect(hoseLeft(s, s.trucks[0])).toBe(24);
     // A door with a hose through it cannot be closed.
     const s2 = standAt(structuredClone(s), 'ff2', 3, 2);
     expect(performAction(s2, { type: 'toggle', unitId: 'ff2', target: P(3, 3) }).error).toMatch(/hose runs through/);
     // Walking back along the hose takes it back in.
     s = run(s, move('ff1', P(3, 3)));
-    expect(s.hoses[0].tiles).toEqual([P(3, 2), P(3, 3)]);
+    expect(s.hoses[0].tiles).toEqual([P(2, 2), P(3, 2), P(3, 3)]);
   });
 
-  it('must be next to an engine to take a line', () => {
-    const s = standAt(parked(), 'ff1', 8, 4);
-    expect(performAction(s, { type: 'takeLine', unitId: 'ff1', kind: 'attack' }).error).toMatch(/next to an engine/);
+  it('must stand beside the hose connections to take an attack line', () => {
+    expect(performAction(standAt(parked(), 'ff1', 8, 4), take()).error).toMatch(/hose connections/);
+    expect(performAction(standAt(parked(), 'ff1', 0, 2), take()).error).toMatch(/hose connections/); // beside the cab
+  });
+
+  it('each side has one 1¾″ and one 2½″ line', () => {
+    let s = run(parked(), move('ff1', P(2, 2)), take('1.75'));
+    s = standAt(s, 'ff2', 2, 2);
+    s.units[0].pos = P(3, 2);
+    expect(performAction(s, take('1.75', 'ff2')).error).toMatch(/1¾″ line on this side is already in use/);
+    s = run(s, take('2.5', 'ff2'));
+    expect(s.hoses.map((l) => l.size)).toEqual(['1.75', '2.5']);
   });
 
   it('cannot go further than the hose left on the engine', () => {
-    let s = run(parked(), move('ff1', P(3, 2)), { type: 'takeLine', unitId: 'ff1', kind: 'attack' });
+    let s = run(parked(), move('ff1', P(2, 2)), take());
     s.trucks[0].hose = 2;
     s = fresh(s);
-    expect(performAction(s, move('ff1', P(4, 2), P(5, 2))).error).toMatch(/Not enough hose — 1/);
-    expect(pathTo(s, s.units[0], P(5, 2))).toBeNull();
-    expect(pathTo(s, s.units[0], P(4, 2))).not.toBeNull();
+    expect(performAction(s, move('ff1', P(3, 2), P(4, 2))).error).toMatch(/Not enough hose — 1/);
+    expect(pathTo(s, s.units[0], P(4, 2))).toBeNull();
+    expect(pathTo(s, s.units[0], P(3, 2))).not.toBeNull();
   });
 
   it('spraying needs an attack line and drains the engine tank', () => {
-    let s = run(parked(), move('ff1', P(3, 2)));
+    let s = run(parked(), move('ff1', P(2, 2)));
     s = standAt(s, 'ff2', 5, 4);
     expect(performAction(s, { type: 'spray', unitId: 'ff2', target: P(6, 4) }).error).toMatch(/attack line/);
-    s = run(s, { type: 'takeLine', unitId: 'ff1', kind: 'attack' });
+    s = run(s, take());
     s = fresh(s);
-    s = run(s, { type: 'toggle', unitId: 'ff1', target: P(3, 3) }, move('ff1', P(3, 3), P(3, 4)));
+    s = run(s, move('ff1', P(3, 2)), { type: 'toggle', unitId: 'ff1', target: P(3, 3) }, move('ff1', P(3, 3), P(3, 4)));
     s = fresh(s);
     s = run(s, move('ff1', P(4, 4)), { type: 'spray', unitId: 'ff1', target: P(6, 4) });
     expect(s.floors[0][4][6].fire).toBe(1);
@@ -163,11 +175,30 @@ describe('hoses', () => {
     expect(performAction(s, { type: 'spray', unitId: 'ff1', target: P(6, 4) }).error).toMatch(/out of water/);
   });
 
+  it('a 2½″ line hits harder, cools more and reaches further but uses more water and is slow to advance', () => {
+    let s = run(parked(), move('ff1', P(2, 2)), take('2.5'));
+    s = fresh(s);
+    // Laying out a new tile of 2½″ costs 2 AP; walking back along it costs the normal 1.
+    expect(performAction(s, move('ff1', P(3, 2))).state.units[0].ap).toBe(2);
+    s = run(s, move('ff1', P(3, 2)));
+    expect(performAction(s, move('ff1', P(2, 2))).state.units[0].ap).toBe(1);
+
+    s = standAt(fresh(s), 'ff1', 2, 5);
+    tileAt(s, P(6, 5))!.contents = 'none';
+    tileAt(s, P(6, 5))!.fire = 3;
+    tileAt(s, P(6, 5))!.temperature = 800;
+    tileAt(s, P(3, 5))!.kind = 'floor'; // clear the drywall stub out of the line of fire
+    expect(performAction(s, { type: 'spray', unitId: 'ff1', target: P(6, 5) }).error).toBeUndefined(); // 4 tiles away
+    s = run(s, { type: 'spray', unitId: 'ff1', target: P(6, 5) });
+    expect(tileAt(s, P(6, 5))).toMatchObject({ fire: 0, temperature: 320 });
+    expect(s.trucks[0].water).toBe(18);
+  });
+
   it('nozzles can be put down, picked up by someone else, and packed away', () => {
-    let s = run(parked(), move('ff1', P(3, 2)), { type: 'takeLine', unitId: 'ff1', kind: 'attack' }, move('ff1', P(4, 2)));
-    s = run(s, { type: 'dropLine', unitId: 'ff1' }, move('ff1', P(5, 2)));
+    let s = run(parked(), move('ff1', P(2, 2)), take(), move('ff1', P(3, 2)));
+    s = run(s, { type: 'dropLine', unitId: 'ff1' }, move('ff1', P(4, 2)));
     expect(s.hoses[0].holder).toBeUndefined();
-    s = run(s, move('ff2', P(4, 1 + 1)));
+    s = run(s, move('ff2', P(3, 2)));
     s = run(s, { type: 'pickupLine', unitId: 'ff2' });
     expect(s.units[1].line).toBe(s.hoses[0].id);
     s = run(s, { type: 'returnLine', unitId: 'ff2' });
@@ -301,9 +332,10 @@ describe('player actions', () => {
   });
 
   it('cannot carry someone while holding a hose', () => {
-    let s = run(parked(), move('ff1', P(3, 2)), { type: 'takeLine', unitId: 'ff1', kind: 'attack' });
+    let s = run(parked(), move('ff1', P(2, 2)), { type: 'takeLine', unitId: 'ff1', kind: 'attack' }, move('ff1', P(3, 2)));
+    s = run(s, { type: 'toggle', unitId: 'ff1', target: P(3, 3) });
     s = fresh(s);
-    s = run(s, { type: 'toggle', unitId: 'ff1', target: P(3, 3) }, move('ff1', P(3, 3), P(3, 4)));
+    s = run(s, move('ff1', P(3, 3), P(3, 4)));
     expect(performAction(s, { type: 'pickup', unitId: 'ff1', target: P(2, 4) }).error).toMatch(/hose down/);
   });
 
@@ -334,8 +366,9 @@ describe('player actions', () => {
     };
     let s = parked();
     const steps: Action[] = [
-      move('ff1', P(3, 2)),
+      move('ff1', P(2, 2)),
       { type: 'takeLine', unitId: 'ff1', kind: 'attack' },
+      move('ff1', P(3, 2)),
       { type: 'toggle', unitId: 'ff1', target: P(3, 3) },
       move('ff1', P(3, 3)),
       move('ff1', P(3, 4), P(4, 4)),

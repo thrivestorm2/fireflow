@@ -1,5 +1,5 @@
 import { blockers, lineOf, moveOrigins, stepCost, stepNeighbors } from './actions';
-import { hoseLeft } from './hoses';
+import { HOSE_SIZES, hoseLeft } from './hoses';
 import { posKey } from './grid';
 import type { GameState, Pos, Unit } from './types';
 
@@ -28,6 +28,7 @@ export function reachable(state: GameState, unit: Unit, budget = unit.ap): Reach
   const line = lineOf(state, unit);
   const hoseBudget = line ? hoseLeft(state, state.trucks.find((t) => t.id === line.truckId)!) : Infinity;
   const onOwnHose = new Set(line?.tiles.map(posKey));
+  const heavy = line ? HOSE_SIZES[line.size].advanceExtra : 0;
 
   while (open.length) {
     open.sort((a, b) => a.c - b.c);
@@ -36,8 +37,9 @@ export function reachable(state: GameState, unit: Unit, budget = unit.ap): Reach
     for (const n of stepNeighbors(state, p)) {
       const step = stepCost(state, p, n, carrying, block);
       if (typeof step === 'string') continue;
-      const nc = c + step;
-      const nh = hose + (onOwnHose.has(posKey(n)) ? 0 : 1);
+      const fresh = !onOwnHose.has(posKey(n));
+      const nc = c + step + (fresh ? heavy : 0);
+      const nh = hose + (fresh ? 1 : 0);
       if (nc > budget || nh > hoseBudget || nc >= (cost.get(posKey(n)) ?? Infinity)) continue;
       cost.set(posKey(n), nc);
       prev.set(posKey(n), p);

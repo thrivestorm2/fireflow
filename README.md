@@ -102,12 +102,24 @@ Anyone can open and close unlocked doors and windows, which is the simplest vent
 
 - **Water comes from the engine.** Each engine arrives with a full tank, and every spray uses one unit
   from the engine feeding that line. Until the engine is supplied by a hydrant, the tank only goes down.
-- **Hose is limited.** A crew member next to an engine pulls off an **attack line** (blue, up to 2 per
-  engine) or a **5″ supply line** (yellow large-diameter hose, 1 per engine). The hose follows their exact path, one tile of hose per tile
+- **Attack lines come off the engine's hose connections**, halfway down each long side (drawn on the
+  truck). Each side has a red **1¾″** and a blue **2½″** coupling, so an engine has up to four attack
+  lines. With a firefighter selected and standing beside the connections, click the coupling you want
+  (the half toward the cab is the 1¾″), or press **A** (1¾″) / **D** (2½″). Couplings in use are
+  greyed out.
+
+  | Attack line | Water per spray | Knockdown | Cooling (target / around it) | Reach | Advancing |
+  |---|---|---|---|---|---|
+  | 1¾″ (red) | 1 | −2 fire | −320 °C / −80 °C | 3 tiles | normal |
+  | 2½″ (blue) | 2 | −3 fire | −480 °C / −180 °C | 4 tiles | +1 AP per new tile of hose laid |
+
+- **Hose is limited.** A crew member pulls an attack line from the couplings, or the **5″ supply
+  line** (yellow large-diameter hose, 1 per engine) from anywhere beside the engine. The hose follows their exact path, one tile of hose per tile
   walked, through doors, up stairs and up ladders. They can't go further than the hose left on that
   engine. Walking back along the hose takes it back in. The hose can be put down and picked up by
   someone else, or packed back onto the engine. A door with a hose through it can't be closed.
-- **Spraying needs the nozzle of an attack line** whose engine still has water.
+- **Spraying needs the nozzle of an attack line** whose engine still has enough water. Thick smoke
+  cuts the reach of either size by one tile.
 - **Hydrants take crew time.** Walk a supply line next to a hydrant and **click the hydrant** (or
   press **Y**). Hooking up is 5 AP of work: take the cap off (1), couple the hose (2, using one more
   tile of hose), and open the hydrant (2). The firefighter spends whatever AP they have left on it.
@@ -121,12 +133,13 @@ Anyone can open and close unlocked doors and windows, which is the simplest vent
 
 | Action | AP | Notes |
 |---|---|---|
-| Move | 1/tile | +1 over furniture, +1 through a window, +1 while carrying someone, +1 in thick smoke. Cannot enter a tile burning at intensity 2+. Stairs and ladders connect floors. |
-| Attack / supply line | 1 | Next to an engine with hose left. |
+| Move | 1/tile | +1 over furniture, +1 through a window, +1 while carrying someone, +1 in thick smoke, +1 per new tile of 2½″ hose laid. Cannot enter a tile burning at intensity 2+. Stairs and ladders connect floors. |
+| Attack line | 1 | Beside the engine's hose connections; click the 1¾″ or 2½″ coupling. |
+| Supply line | 1 | Beside an engine with hose left. |
 | Put down / pick up hose | 0 / 1 | Pick up the loose end of a line from its tile. |
 | Pack hose | 1 | Next to the line's engine; the whole line goes back on the truck. |
 | Hook up hydrant | up to 5 total | One click; uses your remaining AP and continues next turn — see above. |
-| Spray | 1 | Holding an attack line. Straight line, up to 3 tiles, unobstructed. −2 fire, −320 °C, leaves the tile wet for 2 turns. Uses 1 water from the engine. |
+| Spray | 1 | Holding an attack line. Straight, unobstructed line within the hose's reach. Strength and water use depend on the hose size (see above). Leaves the tile wet for 2 turns. |
 | Door | 1 | Open or close an adjacent door or window. |
 | Carry / Put down | 1 / 0 | Pick up an adjacent civilian (hands must be free of hose). Carrying them to any outside tile rescues them. |
 | Search | 1–2 | Your tile and the 8 around it; 2 AP in thick smoke. |
@@ -144,7 +157,7 @@ Select a firefighter (click, **Tab**, or click their truck) and click tiles. In 
 does the obvious thing: pick up an adjacent civilian, spray a burning tile in range, open an adjacent
 closed door, or walk to the tile by the shortest path (stairs and ladders included). Explicit modes:
 **1** Auto, **2** Move, **3** Spray, **4** Door, **5** Tools, **6** Carry. **Enter** ends the turn,
-**Z** undoes within the turn, **A** / **S** take an attack / supply line, **N** picks up or puts
+**Z** undoes within the turn, **A** / **D** / **S** take a 1¾″ attack / 2½″ attack / 5″ supply line, **N** picks up or puts
 down a hose, **B** packs a hose, **Y** hooks up an adjacent hydrant, **G** puts a person down, **E** searches, **P** places or removes a fan, **L**
 raises a ladder, **R** turns a truck being parked, **H**/**V** toggle the heat/smoke overlays, **Esc** cancels. Hover a tile to inspect
 its material, contents, condition and temperature. Dashed orange borders mark tiles close to igniting.

@@ -1,4 +1,4 @@
-import { actionCost, canSprayFrom, type Action } from '../core/actions';
+import { actionCost, canSprayFrom, nozzleRange, type Action } from '../core/actions';
 import { isAdjacent, isWalkable, samePos, tileAt } from '../core/grid';
 import { hydrantAt } from '../core/hoses';
 import { pathTo } from '../core/pathing';
@@ -58,7 +58,9 @@ export function planClick(state: GameState, unit: Unit, target: Pos, mode: Mode)
       }
       if (hydrantAt(state, target) && isAdjacent(unit.pos, target)) return single({ type: 'hydrant', unitId: id, target });
       const nozzle = state.hoses.some((l) => l.id === unit.line && l.kind === 'attack');
-      if (t.fire > 0 && nozzle && !canSprayFrom(state, unit.pos, target)) return single({ type: 'spray', unitId: id, target });
+      if (t.fire > 0 && nozzle && !canSprayFrom(state, unit.pos, target, nozzleRange(state, unit))) {
+        return single({ type: 'spray', unitId: id, target });
+      }
       if ((t.kind === 'door' || t.kind === 'window') && !t.open && isAdjacent(unit.pos, target)) {
         if (t.locked && unit.role === 'ladder') return single({ type: 'force', unitId: id, target });
         return single({ type: 'toggle', unitId: id, target });
