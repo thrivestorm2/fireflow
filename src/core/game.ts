@@ -22,22 +22,35 @@ function runEnvironment(state: GameState, systems: SimSystem[] = SYSTEMS): void 
   state.rngState = rng.state;
 }
 
+/** Trucks due this turn reach the scene and wait in staging until the player parks them. */
+function arriveTrucks(state: GameState): void {
+  for (const t of state.trucks) {
+    if (t.status === 'enroute' && t.arrivalTurn <= state.turn) {
+      t.status = 'staged';
+      state.log.push({ turn: state.turn, text: `${t.name} is on scene — choose where to park it.`, tone: 'good' });
+    }
+  }
+}
+
 export function newGame(scenario: Scenario): GameState {
   const state = buildState(scenario);
   for (let i = 0; i < scenario.preburn; i++) runEnvironment(state);
-  state.log.push({ turn: 1, text: `Engine on scene. ${scenario.description}`, tone: 'info' });
+  state.log.push({ turn: 1, text: scenario.description, tone: 'info' });
+  arriveTrucks(state);
   return state;
 }
 
 /**
- * Ends the player phase: the environment acts (fire spreads, smoke moves, the
- * structure weakens, people are exposed), then a new player phase begins.
+ * Ends the player phase. The fire phase follows: fire spreads, smoke moves, the
+ * structure weakens and people are exposed. Then the next player phase begins:
+ * new trucks arrive and every firefighter's AP is restored.
  */
 export function endTurn(prev: GameState, systems: SimSystem[] = SYSTEMS): GameState {
   if (prev.status !== 'playing') return prev;
   const state = structuredClone(prev);
   state.turn += 1;
   runEnvironment(state, systems);
+  arriveTrucks(state);
   for (const u of state.units) if (u.status === 'active') u.ap = u.maxAp;
   evaluate(state);
   return state;

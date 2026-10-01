@@ -10,7 +10,8 @@ export const STRUCTURE = {
   /** Integrity lost by the tile above a collapsed wall (loss of support). */
   supportLoss: 30,
   fallDamage: 25,
-  debrisHeat: 25,
+  /** Temperature added to the tile below when burning debris lands on it. */
+  debrisHeat: 200,
 } as const;
 
 /** Whether fire on this tile eats into its structural integrity. */
@@ -66,16 +67,16 @@ export function collapse(ctx: SimContext, p: Pos): void {
   if (t.kind === 'floor' || t.kind === 'stairs') {
     const below = tileAt(state, { ...p, floor: p.floor - 1 });
     if (below) {
-      below.heat = Math.min(100, below.heat + STRUCTURE.debrisHeat);
+      below.temperature += STRUCTURE.debrisHeat;
       below.fuel += t.fuel / 2;
       if (t.fire > 0 && below.fuel > 0 && below.kind !== 'wall') below.fire = Math.max(below.fire, 1);
     }
-    Object.assign(t, { kind: 'hole', material: 'none', fuel: 0, fire: 0, integrity: 0 });
+    Object.assign(t, { kind: 'hole', material: 'air', contents: 'none', fuel: 0, fire: 0, integrity: 0 });
     log(`The floor gives way on ${floorName(p.floor)}!`, 'bad');
     dropUnits(state, p, log);
   } else {
     const what = t.kind;
-    Object.assign(t, { kind: 'rubble', material: 'none', fuel: 0, fire: 0, integrity: 0, open: true });
+    Object.assign(t, { kind: 'rubble', material: 'debris', contents: 'none', fuel: 0, fire: 0, integrity: 0, open: true });
     log(`A ${what} collapses on ${floorName(p.floor)}.`, 'bad');
   }
 
@@ -84,7 +85,7 @@ export function collapse(ctx: SimContext, p: Pos): void {
 
 function dropUnits(state: GameState, p: Pos, log: SimContext['log']): void {
   for (const u of state.units) {
-    if (u.status !== 'active' || u.carriedBy || !samePos(u.pos, p)) continue;
+    if (u.status !== 'active' || u.aboard || u.carriedBy || !samePos(u.pos, p)) continue;
     let landing: Pos = { ...p, floor: p.floor - 1 };
     if (!isWalkable(tileAt(state, landing)!)) {
       landing = neighbors(state, landing).find((n) => isWalkable(tileAt(state, n)!)) ?? landing;

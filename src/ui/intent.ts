@@ -21,13 +21,14 @@ export function planClick(state: GameState, unit: Unit, target: Pos, mode: Mode)
   const id = unit.id;
   const t = tileAt(state, target);
   if (!t) return { error: 'Out of bounds' };
+  if (unit.aboard && mode !== 'auto' && mode !== 'move') return { error: `${unit.name} must get off the truck first` };
 
   const move = (): Plan => {
     if (samePos(unit.pos, target)) return { error: 'Already here' };
     const path = pathTo(state, unit, target);
-    if (path) return { actions: path.map((to) => ({ type: 'move', unitId: id, to })) };
+    if (path) return { actions: [{ type: 'move', unitId: id, path }] };
     if (!isWalkable(t)) return { error: t.kind === 'door' || t.kind === 'window' ? `The ${t.kind} is closed` : 'Cannot stand there' };
-    return { error: 'Cannot reach that tile this turn' };
+    return { error: unit.ap === 0 ? `${unit.name} has no AP left this turn` : 'Cannot reach that tile this turn' };
   };
   const single = (a: Action): Plan => {
     const c = actionCost(state, a);
@@ -47,11 +48,12 @@ export function planClick(state: GameState, unit: Unit, target: Pos, mode: Mode)
       if (unit.carrying && samePos(unit.pos, target)) return single({ type: 'drop', unitId: id });
       return single({ type: 'pickup', unitId: id, target });
     case 'auto': {
+      if (unit.aboard) return move();
       const civ = state.units.find((u) => u.kind === 'civilian' && u.status === 'active' && !u.carriedBy && samePos(u.pos, target));
       if (civ && !unit.carrying && (isAdjacent(unit.pos, target) || samePos(unit.pos, target))) {
         return single({ type: 'pickup', unitId: id, target });
       }
-      if (t.fire > 0 && !canSprayFrom(state, unit.pos, target)) return single({ type: 'spray', unitId: id, target });
+      if (t.fire > 0 && unit.maxWater > 0 && !canSprayFrom(state, unit.pos, target)) return single({ type: 'spray', unitId: id, target });
       if ((t.kind === 'door' || t.kind === 'window') && !t.open && isAdjacent(unit.pos, target)) {
         return single({ type: 'toggle', unitId: id, target });
       }

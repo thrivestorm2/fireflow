@@ -2,15 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { buildState } from '../src/core/building';
 import { endTurn } from '../src/core/game';
 import { structureSystem } from '../src/core/structure';
-import { miniScenario } from './helpers';
+import { miniScenario, standAt } from './helpers';
 
 describe('structure', () => {
   it('collapses a burning upper floor and drops occupants to the floor below', () => {
-    const s = buildState(
+    let s = buildState(
       miniScenario([['#####', '#___#', '#####'], ['#####', '#___#', '#####']], {
-        firefighters: [{ name: 'A', pos: { floor: 1, x: 2, y: 1 } }],
+        dispatch: [{ name: 'E', type: 'engine', arrivalTurn: 1, crew: ['A'] }],
       }),
     );
+    s = standAt(s, 'ff1', 2, 1, 1);
     const t = s.floors[1][1][2];
     t.fire = 3;
     t.integrity = 5;
@@ -38,5 +39,6 @@ describe('structure', () => {
     wall.integrity = 1;
     const after = endTurn(s, [structureSystem]);
     expect(after.floors[0][1][2].kind).toBe('rubble');
+    expect(after.floors[0][1][2].material).toBe('debris');
   });
 });

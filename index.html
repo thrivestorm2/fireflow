@@ -12,6 +12,7 @@
       <div id="scenario" class="scenario"></div>
       <div id="turn" class="turn"></div>
     </header>
+    <div id="banner" class="banner" hidden></div>
     <main class="layout">
       <section id="floors" class="floors" aria-label="Building floors"></section>
       <aside class="sidebar">
@@ -23,8 +24,8 @@
           </div>
         </div>
         <div class="panel">
-          <h2>Crew</h2>
-          <div id="crew" class="crew"></div>
+          <h2>Dispatch &amp; crew</h2>
+          <div id="dispatch" class="crew"></div>
         </div>
         <div class="panel">
           <h2>Action</h2>
@@ -32,6 +33,7 @@
           <div class="row">
             <button id="drop" title="G">Drop</button>
             <button id="refill" title="R">Refill</button>
+            <button id="ladder" title="L">Ladder</button>
           </div>
           <p id="hint" class="hint"></p>
         </div>
@@ -47,14 +49,14 @@
         <details class="panel help">
           <summary>How to play</summary>
           <ul>
-            <li>Each turn the <b>fire acts first</b>: heat spreads, things ignite, smoke drifts, the structure weakens. Then your crew acts.</li>
-            <li>Select a firefighter (Tab or click) and click tiles. <b>Auto</b> mode moves, sprays fire, opens doors and picks up people.</li>
-            <li>Each firefighter has <b>4 AP</b> and a 6-shot water tank. Refill next to the engine <b>E</b>.</li>
-            <li>Spray reaches 3 tiles in a straight, unobstructed line. Wet tiles resist ignition for 2 turns.</li>
-            <li>Closed doors hold fire back. Heat rises: fire below weakens the floor above and climbs the stairwell.</li>
-            <li>Dashed orange borders mark tiles close to igniting. Upper floors can collapse — anyone on them falls.</li>
-            <li>Carry civilians out to the street. Smoke and heat hurt them every turn.</li>
-            <li>Keys: 1–6 modes, Tab next firefighter, Enter end turn, Z undo, G drop, R refill, H/V overlays.</li>
+            <li>Every turn has two phases. In the <b>fire phase</b> heat spreads, things ignite, smoke drifts and the structure weakens. Fire never spreads during your phase.</li>
+            <li><b>Trucks</b> arrive over several turns. When one is on scene, click <b>Park</b>, then click a road or driveway tile (R rotates). An engine parked within 2 tiles of a hydrant gets unlimited water.</li>
+            <li>The crew starts aboard. Select a firefighter and click a tile next to their truck to get them off.</li>
+            <li>One person per tile. Movement and actions share the firefighter's AP for the turn. Furniture costs extra to climb over; cabinets, shelves and trees block.</li>
+            <li><b>Engine crews</b> (yellow) have 4 AP and a 6-shot hose. Spray reaches 3 tiles in a straight, unobstructed line; refill next to an engine. <b>Ladder crews</b> (orange) have 5 AP and no hose; they can raise a ladder below an upper-floor window.</li>
+            <li>Closed doors hold fire back. Heat rises: fire below weakens the floor above and climbs the stairwell. Dashed orange borders mark tiles close to igniting.</li>
+            <li>Carry civilians outside. Smoke and heat hurt them every turn.</li>
+            <li>Keys: 1–6 modes, Tab next firefighter, Enter end turn, Z undo, G drop, R refill / rotate truck, L ladder, H/V overlays, Esc cancel.</li>
           </ul>
         </details>
       </aside>

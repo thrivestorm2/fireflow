@@ -73,13 +73,8 @@ button.primary:hover:not(:disabled) { background: #c4461a; }
 .floor h3 .fire-count { color: var(--fire); }
 .floor canvas {
   display: block;
-  /* Fit every floor in the viewport while keeping the tile aspect ratio. */
-  width: auto;
-  height: auto;
+  /* Width and height are set from JS so every floor shares one tile size. */
   max-width: 100%;
-  max-height: calc((100vh - 90px) / var(--floor-count, 1) - 40px);
-  min-height: 220px;
-  image-rendering: pixelated;
   border: 1px solid var(--border);
   border-radius: 4px;
   cursor: crosshair;
@@ -161,3 +156,44 @@ button.primary:hover:not(:disabled) { background: #c4461a; }
 }
 .modal h2 { margin-top: 0; font-size: 24px; }
 .modal .score { font-size: 32px; font-weight: 700; color: var(--accent); margin: 8px 0 16px; }
+
+.truck { padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2); }
+.truck + .truck { margin-top: 2px; }
+.truck-head { display: flex; align-items: center; gap: 8px; }
+.truck-head .tname { font-weight: 600; }
+.truck-head .tstatus { color: var(--muted); font-size: 12px; margin-left: auto; text-align: right; }
+.truck-head button { padding: 3px 10px; }
+.truck.enroute { opacity: 0.6; }
+.truck .crewlist { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; border: 1px solid #000; }
+.dot.engine { background: #f5c518; }
+.dot.ladder { background: #ff8a3d; }
+
+.inspector dl { display: grid; grid-template-columns: auto 1fr; gap: 1px 10px; margin: 0; }
+.inspector dt { color: var(--muted); }
+.inspector dd { margin: 0; color: var(--text); }
+
+.banner {
+  position: fixed;
+  top: 40%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(20, 10, 5, 0.9);
+  border: 1px solid #d4541c;
+  color: #ffcc80;
+  padding: 14px 28px;
+  border-radius: 10px;
+  font-size: 22px;
+  font-weight: 700;
+  pointer-events: none;
+  z-index: 5;
+  animation: banner 1.1s ease forwards;
+}
+.banner[hidden] { display: none; }
+@keyframes banner {
+  0% { opacity: 0; }
+  15% { opacity: 1; }
+  75% { opacity: 1; }
+  100% { opacity: 0; }
+}
+.phase { font-size: 12px; color: var(--muted); font-weight: 500; margin-left: 8px; }

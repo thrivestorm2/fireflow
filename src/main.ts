@@ -1,13 +1,14 @@
-import { performAction, type Action } from './core/actions';
+import { actionCost, performAction, type Action } from './core/actions';
 import { exposureDamage } from './core/exposure';
 import { endTurn, newGame, summarize } from './core/game';
-import { tileAt } from './core/grid';
-import { MATERIALS } from './core/materials';
+import { conditions, tileAt } from './core/grid';
+import { CONTENTS, ignitionOf, MATERIALS } from './core/materials';
 import { reachable } from './core/pathing';
-import type { GameState, Pos, Unit } from './core/types';
+import { placementError } from './core/trucks';
+import type { GameState, Orientation, Pos, Truck, Unit } from './core/types';
 import { houseFire } from './scenarios/house';
 import { MODES, planClick, type Mode } from './ui/intent';
-import { drawFloor, TILE, type Overlay } from './ui/render';
+import { drawFloor, TILE, viewRect, type Overlay, type ViewRect } from './ui/render';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -19,33 +20,34 @@ const OVERLAYS: { overlay: Overlay; label: string }[] = [
 ];
 
 let state: GameState = newGame(houseFire);
-/** States at the start of each action this turn, for undo. */
+/** States before each action this turn, for undo. */
 let history: GameState[] = [];
 let selectedId: string | undefined;
 let mode: Mode = 'auto';
 let overlay: Overlay = 'normal';
 let hover: Pos | undefined;
 let hint = { text: '', error: false };
+/** Truck currently being parked, if any. */
+let placing: { truckId: string; orientation: Orientation } | undefined;
 
 const canvases: HTMLCanvasElement[] = [];
+let rects: ViewRect[] = [];
 
-function firefighters(): Unit[] {
-  return state.units.filter((u) => u.kind === 'firefighter');
-}
-
-function selected(): Unit | undefined {
-  return state.units.find((u) => u.id === selectedId && u.status === 'active');
-}
+const firefighters = (): Unit[] => state.units.filter((u) => u.kind === 'firefighter');
+const selected = (): Unit | undefined => state.units.find((u) => u.id === selectedId && u.status === 'active');
+const truckById = (id?: string): Truck | undefined => state.trucks.find((t) => t.id === id);
 
 function setHint(text: string, error = false): void {
   hint = { text, error };
 }
 
+// ---------------------------------------------------------------- floors & layout
+
 function buildFloors(): void {
   const root = $('floors');
   root.innerHTML = '';
-  root.style.setProperty('--floor-count', String(state.floors.length));
   canvases.length = 0;
+  rects = state.floors.map((_, f) => viewRect(state, f));
   // Top floor first, so the page reads like a cutaway of the building.
   for (let f = state.floors.length - 1; f >= 0; f--) {
     const wrap = document.createElement('div');
@@ -53,8 +55,8 @@ function buildFloors(): void {
     const h = document.createElement('h3');
     h.id = `floor-label-${f}`;
     const canvas = document.createElement('canvas');
-    canvas.width = state.width * TILE;
-    canvas.height = state.height * TILE;
+    canvas.width = rects[f].cols * TILE;
+    canvas.height = rects[f].rows * TILE;
     canvas.addEventListener('mousemove', (e) => {
       hover = eventPos(canvas, f, e);
       renderInspector();
@@ -67,20 +69,43 @@ function buildFloors(): void {
       const p = eventPos(canvas, f, e);
       if (p) onTileClick(p);
     });
+    canvas.addEventListener('contextmenu', (e) => {
+      if (!placing) return;
+      e.preventDefault();
+      rotatePlacement();
+    });
     canvases[f] = canvas;
     wrap.append(h, canvas);
     root.append(wrap);
   }
+  layout();
+}
+
+/** Sizes every floor canvas with the same on-screen tile size, fitting the viewport where possible. */
+function layout(): void {
+  const root = $('floors');
+  const width = root.clientWidth;
+  const totalRows = rects.reduce((n, r) => n + r.rows, 0);
+  const maxCols = Math.max(...rects.map((r) => r.cols));
+  const available = window.innerHeight - 70 - rects.length * 34;
+  const tile = Math.max(16, Math.min(40, Math.floor(Math.min(width / maxCols, available / totalRows))));
+  canvases.forEach((c, f) => {
+    c.style.width = `${rects[f].cols * tile}px`;
+    c.style.height = `${rects[f].rows * tile}px`;
+  });
 }
 
 function eventPos(canvas: HTMLCanvasElement, floor: number, e: MouseEvent): Pos | undefined {
   const r = canvas.getBoundingClientRect();
-  const x = Math.floor(((e.clientX - r.left) / r.width) * state.width);
-  const y = Math.floor(((e.clientY - r.top) / r.height) * state.height);
-  return x >= 0 && y >= 0 && x < state.width && y < state.height ? { floor, x, y } : undefined;
+  const v = rects[floor];
+  const x = v.x0 + Math.floor(((e.clientX - r.left) / r.width) * v.cols);
+  const y = v.y0 + Math.floor(((e.clientY - r.top) / r.height) * v.rows);
+  return x >= v.x0 && y >= v.y0 && x < v.x0 + v.cols && y < v.y0 + v.rows ? { floor, x, y } : undefined;
 }
 
-function commit(actions: Action[]): void {
+// ---------------------------------------------------------------- actions
+
+function commit(actions: Action[]): boolean {
   const before = state;
   let s = state;
   let error: string | undefined;
@@ -98,69 +123,126 @@ function commit(actions: Action[]): void {
   }
   setHint(error ?? '', !!error);
   render();
+  return !error;
 }
 
 function onTileClick(p: Pos): void {
   if (state.status !== 'playing') return;
-  const own = firefighters().find((u) => u.status === 'active' && u.pos.floor === p.floor && u.pos.x === p.x && u.pos.y === p.y);
+
+  if (placing) {
+    if (p.floor !== 0) return setHintAndRender('Trucks park on the ground floor.', true);
+    const truck = truckById(placing.truckId)!;
+    if (commit([{ type: 'placeTruck', truckId: truck.id, pos: p, orientation: placing.orientation }])) {
+      placing = undefined;
+      selectedId = state.units.find((u) => u.aboard === truck.id && u.status === 'active')?.id ?? selectedId;
+      setHintAndRender(`${truck.name} parked. Click a tile next to it to get the crew off.`);
+    }
+    return;
+  }
+
+  const own = firefighters().find((u) => u.status === 'active' && !u.aboard && u.pos.floor === p.floor && u.pos.x === p.x && u.pos.y === p.y);
   const sel = selected();
   // Clicking another firefighter selects them, unless an explicit mode targets that tile.
   if (own && (!sel || (own.id !== sel.id && (mode === 'auto' || mode === 'move')))) {
     selectedId = own.id;
-    setHint(`${own.name} selected.`);
-    render();
-    return;
+    return setHintAndRender(`${own.name} selected.`);
   }
-  if (!sel) {
-    setHint('Select a firefighter first (Tab).', true);
-    render();
-    return;
+  // Clicking a parked truck selects the next crew member still aboard.
+  const truck = state.trucks.find((t) => t.status === 'placed' && footprintHas(t, p));
+  if (truck && (!sel || !sel.aboard || sel.aboard !== truck.id)) {
+    const crew = state.units.find((u) => u.aboard === truck.id && u.status === 'active');
+    if (crew) {
+      selectedId = crew.id;
+      return setHintAndRender(`${crew.name} selected — click a tile next to ${truck.name} to get off.`);
+    }
+  }
+  if (!sel) return setHintAndRender('Select a firefighter first (Tab).', true);
+  if (sel.aboard && truckById(sel.aboard)?.status !== 'placed') {
+    return setHintAndRender(`${sel.name} is still on ${truckById(sel.aboard)?.name}. Park the truck first.`, true);
   }
   const plan = planClick(state, sel, p, mode);
-  if ('error' in plan) {
-    setHint(plan.error, true);
-    render();
-    return;
-  }
+  if ('error' in plan) return setHintAndRender(plan.error, true);
   commit(plan.actions);
+}
+
+function footprintHas(t: Truck, p: Pos): boolean {
+  if (!t.pos || p.floor !== 0) return false;
+  for (let i = 0; i < 3; i++) {
+    const x = t.orientation === 'h' ? t.pos.x + i : t.pos.x;
+    const y = t.orientation === 'v' ? t.pos.y + i : t.pos.y;
+    if (x === p.x && y === p.y) return true;
+  }
+  return false;
+}
+
+function setHintAndRender(text: string, error = false): void {
+  setHint(text, error);
+  render();
+}
+
+function startPlacing(truck: Truck): void {
+  placing = { truckId: truck.id, orientation: placing?.orientation ?? 'h' };
+  setHintAndRender(`Click a road or driveway tile to park ${truck.name}. R or right-click rotates, Esc cancels.`);
+}
+
+function rotatePlacement(): void {
+  if (!placing) return;
+  placing.orientation = placing.orientation === 'h' ? 'v' : 'h';
+  render();
 }
 
 function doEndTurn(): void {
   if (state.status !== 'playing') return;
+  placing = undefined;
+  showBanner('🔥 Fire phase');
   state = endTurn(state);
   history = [];
   if (!selected()) selectedId = firefighters().find((u) => u.status === 'active')?.id;
-  setHint(`Turn ${state.turn}. The fire has moved — your crew is ready.`);
+  const arrived = state.trucks.filter((t) => t.status === 'staged' && t.arrivalTurn === state.turn);
+  setHint(arrived.length ? `${arrived.map((t) => t.name).join(' and ')} on scene — park it.` : `Turn ${state.turn}. Your move.`);
   render();
+}
+
+function showBanner(text: string): void {
+  const b = $('banner');
+  b.textContent = text;
+  b.hidden = false;
+  b.style.animation = 'none';
+  void b.offsetWidth; // restart the animation
+  b.style.animation = '';
+  window.setTimeout(() => (b.hidden = true), 1100);
 }
 
 function undo(): void {
   const prev = history.pop();
   if (!prev) return;
   state = prev;
-  setHint('Undone.');
-  render();
+  setHintAndRender('Undone.');
 }
 
 function cycleSelection(): void {
-  const active = firefighters().filter((u) => u.status === 'active');
-  if (!active.length) return;
-  const i = active.findIndex((u) => u.id === selectedId);
-  selectedId = active[(i + 1) % active.length].id;
+  const usable = firefighters().filter((u) => u.status === 'active' && (!u.aboard || truckById(u.aboard)?.status === 'placed'));
+  if (!usable.length) return;
+  const i = usable.findIndex((u) => u.id === selectedId);
+  selectedId = usable[(i + 1) % usable.length].id;
   render();
 }
 
 function setMode(m: Mode): void {
   mode = m;
-  setHint(MODES.find((x) => x.mode === m)!.hint);
-  render();
+  setHintAndRender(MODES.find((x) => x.mode === m)!.hint);
 }
 
-// ---------------------------------------------------------------- rendering
+function unitAction(type: 'drop' | 'refill' | 'ladder'): void {
+  const u = selected();
+  if (u) commit([{ type, unitId: u.id }]);
+}
+
+// ---------------------------------------------------------------- panels
 
 function renderSummary(): void {
   const s = summarize(state);
-  $('turn').textContent = `Turn ${state.turn}`;
+  $('turn').innerHTML = `Turn ${state.turn}<span class="phase">${state.status === 'playing' ? 'your move' : state.status}</span>`;
   $('scenario').textContent = state.scenarioName;
   const rows: [string, string | number][] = [
     ['Burning tiles', s.burning],
@@ -175,25 +257,68 @@ function renderSummary(): void {
   ($('undo') as HTMLButtonElement).disabled = history.length === 0;
 }
 
-function renderCrew(): void {
-  const crew = $('crew');
-  crew.innerHTML = '';
-  for (const u of firefighters()) {
-    const b = document.createElement('button');
-    b.className = 'card' + (u.id === selectedId ? ' active' : '');
-    b.disabled = u.status !== 'active';
-    const carrying = u.carrying ? state.units.find((c) => c.id === u.carrying)?.name : undefined;
-    const where = u.pos.floor === 0 ? 'Ground floor' : `Floor ${u.pos.floor + 1}`;
-    b.innerHTML = `
-      <span class="name">${u.name}${u.status === 'down' ? ' — DOWN' : ''}</span>
-      <span class="pips" title="Action points">${'●'.repeat(u.ap)}${'○'.repeat(Math.max(0, u.maxAp - u.ap))}</span>
-      <div class="bar"><span style="width:${(100 * u.hp) / u.maxHp}%"></span></div>
-      <span class="meta">💧 ${u.water}/${u.maxWater} · ${where}${carrying ? ` · carrying ${carrying}` : ''}</span>`;
-    b.addEventListener('click', () => {
-      selectedId = u.id;
-      render();
-    });
-    crew.append(b);
+function crewCard(u: Unit): HTMLButtonElement {
+  const b = document.createElement('button');
+  b.className = 'card' + (u.id === selectedId ? ' active' : '');
+  const truck = truckById(u.aboard);
+  b.disabled = u.status !== 'active' || (!!truck && truck.status !== 'placed');
+  const carrying = u.carrying ? state.units.find((c) => c.id === u.carrying)?.name : undefined;
+  const where = u.aboard ? 'aboard' : u.pos.floor === 0 ? 'ground floor' : `floor ${u.pos.floor + 1}`;
+  const water = u.maxWater ? `💧 ${u.water}/${u.maxWater} · ` : '🪜 ';
+  b.innerHTML = `
+    <span class="name"><span class="dot ${u.role}"></span> ${u.name}${u.status === 'down' ? ' — DOWN' : ''}</span>
+    <span class="pips" title="Action points">${'●'.repeat(u.ap)}${'○'.repeat(Math.max(0, u.maxAp - u.ap))}</span>
+    <div class="bar"><span style="width:${(100 * u.hp) / u.maxHp}%"></span></div>
+    <span class="meta">${water}${where}${carrying ? ` · carrying ${carrying}` : ''}</span>`;
+  b.addEventListener('click', () => {
+    selectedId = u.id;
+    placing = undefined;
+    render();
+  });
+  return b;
+}
+
+function renderDispatch(): void {
+  const el = $('dispatch');
+  el.innerHTML = '';
+  for (const t of state.trucks) {
+    const box = document.createElement('div');
+    box.className = `truck ${t.status}`;
+    const head = document.createElement('div');
+    head.className = 'truck-head';
+    let status: string;
+    if (t.status === 'enroute') {
+      const n = t.arrivalTurn - state.turn;
+      status = `en route — arrives turn ${t.arrivalTurn}${n === 1 ? ' (next)' : ''}`;
+    } else if (t.status === 'staged') {
+      status = 'on scene — waiting to park';
+    } else if (t.type === 'engine') {
+      status = t.hydrant ? 'parked · on hydrant ∞' : `parked · tank ${t.water}/${t.maxWater}`;
+    } else {
+      status = 'parked';
+    }
+    head.innerHTML = `<span class="dot ${t.type}"></span><span class="tname">${t.name}</span><span class="tstatus">${status}</span>`;
+    if (t.status === 'staged') {
+      const btn = document.createElement('button');
+      btn.textContent = placing?.truckId === t.id ? 'Cancel' : 'Park';
+      btn.className = placing?.truckId === t.id ? '' : 'primary';
+      btn.addEventListener('click', () => {
+        if (placing?.truckId === t.id) {
+          placing = undefined;
+          setHintAndRender('Parking cancelled.');
+        } else startPlacing(t);
+      });
+      head.append(btn);
+    }
+    box.append(head);
+    if (t.status !== 'enroute') {
+      const list = document.createElement('div');
+      list.className = 'crewlist';
+      const crew = state.units.filter((u) => u.truck === t.id);
+      for (const u of crew) list.append(crewCard(u));
+      box.append(list);
+    }
+    el.append(box);
   }
 }
 
@@ -221,8 +346,10 @@ function renderModes(): void {
     ov.append(b);
   }
   const sel = selected();
-  ($('drop') as HTMLButtonElement).disabled = !sel?.carrying;
-  ($('refill') as HTMLButtonElement).disabled = !sel;
+  const can = (type: 'drop' | 'refill' | 'ladder') => !!sel && typeof actionCost(state, { type, unitId: sel.id }) === 'number';
+  ($('drop') as HTMLButtonElement).disabled = !can('drop');
+  ($('refill') as HTMLButtonElement).disabled = !can('refill');
+  ($('ladder') as HTMLButtonElement).disabled = !can('ladder');
   const h = $('hint');
   h.textContent = hint.text;
   h.className = 'hint' + (hint.error ? ' error' : '');
@@ -236,16 +363,22 @@ function renderInspector(): void {
     return;
   }
   const kind = t.kind === 'door' || t.kind === 'window' ? `${t.broken ? 'broken' : t.open ? 'open' : 'closed'} ${t.kind}` : t.kind;
-  const mat = MATERIALS[t.material];
+  const ign = ignitionOf(t.material, t.contents);
   const people = state.units
-    .filter((u) => u.status === 'active' && u.pos.floor === hover!.floor && u.pos.x === hover!.x && u.pos.y === hover!.y)
+    .filter((u) => u.status === 'active' && !u.aboard && u.pos.floor === hover!.floor && u.pos.x === hover!.x && u.pos.y === hover!.y)
     .map((u) => `${u.name} (${u.hp} HP, −${exposureDamage(state, u)}/turn)`);
-  const fire = ['none', 'smouldering', 'burning', 'fully involved'][t.fire];
+  const extras = [t.drivable ? 'drivable' : '', t.ladder ? 'ladder' : ''].filter(Boolean).join(', ');
   el.innerHTML = `
-    <b>${kind[0].toUpperCase() + kind.slice(1)}</b> · ${mat.label}${t.burnt ? ' (burnt)' : ''}<br/>
-    Fire: <b>${fire}</b> · Heat <b>${Math.round(t.heat)}</b>${Number.isFinite(mat.ignition) ? ` / ignites ${mat.ignition}` : ''}<br/>
-    Smoke <b>${Math.round(t.smoke)}</b> · Fuel <b>${t.fuel.toFixed(1)}</b> · Integrity <b>${Math.max(0, Math.round(t.integrity))}</b>${t.wet ? ' · wet' : ''}
-    ${people.length ? `<br/>${people.join(', ')}` : ''}`;
+    <dl>
+      <dt>Tile</dt><dd>${kind}${extras ? ` (${extras})` : ''}</dd>
+      <dt>Material</dt><dd>${MATERIALS[t.material].label}</dd>
+      <dt>Contents</dt><dd>${CONTENTS[t.contents].label}</dd>
+      <dt>Condition</dt><dd>${conditions(t).join(', ')}</dd>
+      <dt>Temperature</dt><dd>${Math.round(t.temperature)}°C${Number.isFinite(ign) && t.fuel > 0 ? ` (ignites ~${ign}°C)` : ''}</dd>
+      <dt>Smoke · fuel</dt><dd>${Math.round(t.smoke)}% · ${t.fuel.toFixed(1)}</dd>
+      <dt>Integrity</dt><dd>${Math.max(0, Math.round(t.integrity))}%</dd>
+      ${people.length ? `<dt>People</dt><dd>${people.join(', ')}</dd>` : ''}
+    </dl>`;
 }
 
 function renderLog(): void {
@@ -277,29 +410,37 @@ function renderModal(): void {
 function renderFloorLabels(): void {
   state.floors.forEach((rows, f) => {
     const burning = rows.flat().filter((t) => t.fire > 0).length;
-    $(`floor-label-${f}`).innerHTML = `<span>${f === 0 ? 'Ground floor' : `Floor ${f + 1}`}</span>${burning ? `<span class="fire-count">🔥 ${burning}</span>` : ''}`;
+    const name = f === 0 ? 'Ground floor & street' : `Floor ${f + 1}`;
+    $(`floor-label-${f}`).innerHTML = `<span>${name}</span>${burning ? `<span class="fire-count">🔥 ${burning}</span>` : ''}`;
   });
 }
 
-let reachCache: { state: GameState; id: string; reach: Map<string, number> } | undefined;
+// ---------------------------------------------------------------- drawing
+
+let reachCache: { state: GameState; id: string; stops: Set<string> } | undefined;
 
 function drawAll(time: number): void {
   const sel = selected();
-  let reach: Map<string, number> | undefined;
-  if (sel) {
+  let stops: Set<string> | undefined;
+  if (sel && (!sel.aboard || truckById(sel.aboard)?.status === 'placed')) {
     if (!reachCache || reachCache.state !== state || reachCache.id !== sel.id) {
-      reachCache = { state, id: sel.id, reach: reachable(state, sel).cost };
+      reachCache = { state, id: sel.id, stops: reachable(state, sel).stops };
     }
-    reach = reachCache.reach;
+    stops = reachCache.stops;
   }
+  const placingView = placing && {
+    truck: truckById(placing.truckId)!,
+    orientation: placing.orientation,
+    error: hover ? placementError(state, hover, placing.orientation) : 'no position',
+  };
   canvases.forEach((c, f) => {
-    drawFloor(c.getContext('2d')!, state, f, { selected: sel, hover, reach, mode, overlay, time });
+    drawFloor(c.getContext('2d')!, state, f, { selected: sel, hover, stops, mode, overlay, time, placing: placingView }, rects[f]);
   });
 }
 
 function render(): void {
   renderSummary();
-  renderCrew();
+  renderDispatch();
   renderModes();
   renderInspector();
   renderLog();
@@ -315,47 +456,54 @@ function loop(time: number): void {
 function restart(): void {
   state = newGame(houseFire);
   history = [];
-  selectedId = firefighters()[0]?.id;
+  placing = undefined;
+  selectedId = undefined;
   mode = 'auto';
-  setHint('Select a firefighter and click a tile. Fire acts at the start of every turn.');
   buildFloors();
-  render();
+  const first = state.trucks.find((t) => t.status === 'staged');
+  if (first) startPlacing(first);
+  else render();
 }
 
 // ---------------------------------------------------------------- wiring
 
 $('end-turn').addEventListener('click', doEndTurn);
 $('undo').addEventListener('click', undo);
-$('drop').addEventListener('click', () => selected() && commit([{ type: 'drop', unitId: selected()!.id }]));
-$('refill').addEventListener('click', () => selected() && commit([{ type: 'refill', unitId: selected()!.id }]));
+$('drop').addEventListener('click', () => unitAction('drop'));
+$('refill').addEventListener('click', () => unitAction('refill'));
+$('ladder').addEventListener('click', () => unitAction('ladder'));
+window.addEventListener('resize', layout);
 
 window.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement) return;
   const m = MODES.find((x) => x.key === e.key);
   if (m) return setMode(m.mode);
-  switch (e.key) {
-    case 'Tab':
+  switch (e.key.toLowerCase()) {
+    case 'tab':
       e.preventDefault();
       return cycleSelection();
-    case 'Enter':
+    case 'enter':
       e.preventDefault();
       return doEndTurn();
     case 'z':
-    case 'Z':
       return undo();
     case 'g':
-    case 'G':
-      return void (selected() && commit([{ type: 'drop', unitId: selected()!.id }]));
+      return unitAction('drop');
     case 'r':
-    case 'R':
-      return void (selected() && commit([{ type: 'refill', unitId: selected()!.id }]));
+      return placing ? rotatePlacement() : unitAction('refill');
+    case 'l':
+      return unitAction('ladder');
     case 'h':
       overlay = overlay === 'heat' ? 'normal' : 'heat';
       return render();
     case 'v':
       overlay = overlay === 'smoke' ? 'normal' : 'smoke';
       return render();
-    case 'Escape':
+    case 'escape':
+      if (placing) {
+        placing = undefined;
+        return setHintAndRender('Parking cancelled.');
+      }
       return setMode('auto');
   }
 });

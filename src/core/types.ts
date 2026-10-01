@@ -1,11 +1,13 @@
 /**
- * Core data model. The building is a stack of floors; each floor is a grid of
- * equally sized square tiles. Index order is floors[floor][y][x].
+ * Core data model. The site is a stack of floors; each floor is a grid of
+ * equally sized square tiles. Index order is floors[floor][y][x]. The ground
+ * floor includes the outside: yard, sidewalk, road and hydrants.
  */
 
+/** The structural role of a tile. */
 export type TileKind =
-  | 'ground' // outside, at street level (walkable, safe zone)
-  | 'air' // outside, above street level (not walkable, vents smoke/heat)
+  | 'ground' // outside at street level: grass, sidewalk, road, driveway
+  | 'air' // outside above street level (open sky)
   | 'floor'
   | 'wall'
   | 'door'
@@ -14,40 +16,63 @@ export type TileKind =
   | 'hole' // a floor that has collapsed
   | 'rubble'; // a wall/door that has collapsed or been breached
 
+/** What the tile itself is made of. */
 export type Material =
-  | 'none'
-  | 'earth'
+  | 'air'
+  | 'grass'
+  | 'asphalt'
+  | 'concrete'
   | 'brick'
   | 'drywall'
   | 'wood'
   | 'carpet'
-  | 'tile'
-  | 'furniture'
-  | 'glass';
+  | 'ceramic'
+  | 'glass'
+  | 'debris';
+
+/** What is on the tile. */
+export type Contents =
+  | 'none'
+  | 'sofa'
+  | 'bed'
+  | 'table'
+  | 'cabinet'
+  | 'stove'
+  | 'bookshelf'
+  | 'plant'
+  | 'tree'
+  | 'hydrant';
 
 export interface Tile {
   kind: TileKind;
   material: Material;
-  /** Remaining combustible mass. 0 means nothing left to burn. */
-  fuel: number;
-  /** Temperature, 0..100. Ignition happens when heat passes the material's threshold. */
-  heat: number;
+  contents: Contents;
+  /** Temperature in °C. Ambient is 20. */
+  temperature: number;
+
+  // ---- condition
   /** Fire intensity: 0 none, 1 smouldering, 2 burning, 3 fully involved. */
   fire: number;
   /** Smoke density, 0..100. */
   smoke: number;
-  /** Structural integrity, 0..100. Reaching 0 collapses the tile. */
-  integrity: number;
   /** Turns of remaining wetness. Wet tiles resist heat and cannot ignite. */
   wet: number;
+  /** Structural integrity, 0..100. Reaching 0 collapses the tile. */
+  integrity: number;
+  /** True once a tile has burned out. */
+  burnt: boolean;
+  /** Remaining combustible mass (structure + contents). */
+  fuel: number;
+
+  // ---- fixtures
   /** Doors and windows: open or closed. */
   open: boolean;
   /** Windows that shattered (or were broken) cannot be closed again. */
   broken: boolean;
-  /** True once a tile has burned out. */
-  burnt: boolean;
-  /** Fire engine: firefighters adjacent to it can refill water. */
-  engine: boolean;
+  /** Trucks can park here (road, driveway). */
+  drivable: boolean;
+  /** A ground ladder stands here, linking this tile to the same tile on the floor above/below. */
+  ladder: boolean;
 }
 
 export interface Pos {
@@ -58,11 +83,14 @@ export interface Pos {
 
 export type UnitKind = 'firefighter' | 'civilian';
 export type UnitStatus = 'active' | 'down' | 'rescued' | 'dead';
+/** Engine crews fight fire with hoses; ladder crews search, rescue and raise ladders. */
+export type CrewRole = 'engine' | 'ladder';
 
 export interface Unit {
   id: string;
   name: string;
   kind: UnitKind;
+  role?: CrewRole;
   pos: Pos;
   hp: number;
   maxHp: number;
@@ -71,10 +99,35 @@ export interface Unit {
   water: number;
   maxWater: number;
   status: UnitStatus;
+  /** Firefighter: the truck they came on. */
+  truck?: string;
+  /** Firefighter still riding their truck. Same id as `truck` while aboard. */
+  aboard?: string;
   /** Firefighter: id of the civilian being carried. */
   carrying?: string;
   /** Civilian: id of the firefighter carrying them. */
   carriedBy?: string;
+}
+
+export type TruckType = 'engine' | 'ladder';
+export type TruckStatus = 'enroute' | 'staged' | 'placed';
+export type Orientation = 'h' | 'v';
+
+export interface Truck {
+  id: string;
+  name: string;
+  type: TruckType;
+  /** Turn on which the truck reaches the scene. */
+  arrivalTurn: number;
+  status: TruckStatus;
+  /** Front tile of the truck, on the ground floor. Set once placed. */
+  pos?: Pos;
+  orientation: Orientation;
+  /** Water carried for crews to refill from. */
+  water: number;
+  maxWater: number;
+  /** Hooked up to a hydrant: unlimited water. */
+  hydrant: boolean;
 }
 
 export type GameStatus = 'playing' | 'won' | 'lost';
@@ -91,6 +144,7 @@ export interface GameState {
   height: number;
   floors: Tile[][][];
   units: Unit[];
+  trucks: Truck[];
   turn: number;
   status: GameStatus;
   /** Seeded RNG state, so a game is fully reproducible from its seed and actions. */

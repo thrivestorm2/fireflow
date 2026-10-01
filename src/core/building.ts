@@ -1,17 +1,20 @@
-import { MATERIALS } from './materials';
-import type { GameState, Material, Pos, Tile, TileKind, Unit } from './types';
+import { AMBIENT, CONTENTS, MATERIALS } from './materials';
+import type { Contents, CrewRole, GameState, Material, Pos, Tile, TileKind, Truck, TruckType, Unit } from './types';
 
 /**
- * Floor-plan legend used by scenarios:
- *   .  ground (outside, street level)     ' ' air (outside, upper floors)
- *   #  brick exterior wall                 w  drywall interior wall
- *   W  window (closed)                     D  door (closed)    d  door (open)
- *   _  wood floor   ,  carpet   t  tile    f  furniture        S  stairs
- *   E  fire engine (ground tile where firefighters refill water)
+ * Plan legend — what each tile is and what it is made of:
+ *   ' ' open air (upper floors)   .  grass        -  sidewalk (concrete)
+ *   =  road (asphalt, drivable)   :  driveway (concrete, drivable)
+ *   #  brick wall                 w  drywall wall
+ *   W  window (closed)            D  door (closed)   d  door (open)
+ *   _  wood floor   ,  carpet   t  ceramic tile   c  concrete floor   S  stairs
  */
-const LEGEND: Record<string, { kind: TileKind; material: Material; open?: boolean; engine?: boolean }> = {
-  '.': { kind: 'ground', material: 'earth' },
-  ' ': { kind: 'air', material: 'none' },
+const PLAN: Record<string, { kind: TileKind; material: Material; open?: boolean; drivable?: boolean }> = {
+  ' ': { kind: 'air', material: 'air' },
+  '.': { kind: 'ground', material: 'grass' },
+  '-': { kind: 'ground', material: 'concrete' },
+  '=': { kind: 'ground', material: 'asphalt', drivable: true },
+  ':': { kind: 'ground', material: 'concrete', drivable: true },
   '#': { kind: 'wall', material: 'brick' },
   w: { kind: 'wall', material: 'drywall' },
   W: { kind: 'window', material: 'glass' },
@@ -19,41 +22,73 @@ const LEGEND: Record<string, { kind: TileKind; material: Material; open?: boolea
   d: { kind: 'door', material: 'wood', open: true },
   _: { kind: 'floor', material: 'wood' },
   ',': { kind: 'floor', material: 'carpet' },
-  t: { kind: 'floor', material: 'tile' },
-  f: { kind: 'floor', material: 'furniture' },
+  t: { kind: 'floor', material: 'ceramic' },
+  c: { kind: 'floor', material: 'concrete' },
   S: { kind: 'stairs', material: 'wood' },
-  E: { kind: 'ground', material: 'earth', engine: true },
 };
 
-export function makeTile(kind: TileKind, material: Material, extra: Partial<Tile> = {}): Tile {
+/**
+ * Contents legend — what sits on the tile (any other character means nothing):
+ *   s sofa   b bed   k table   c cabinets   o stove   h bookshelf
+ *   p plant  T tree  H fire hydrant
+ */
+const CONTENTS_KEY: Record<string, Contents> = {
+  s: 'sofa',
+  b: 'bed',
+  k: 'table',
+  c: 'cabinet',
+  o: 'stove',
+  h: 'bookshelf',
+  p: 'plant',
+  T: 'tree',
+  H: 'hydrant',
+};
+
+export function makeTile(kind: TileKind, material: Material, contents: Contents = 'none', extra: Partial<Tile> = {}): Tile {
   return {
     kind,
     material,
-    fuel: MATERIALS[material].fuel,
-    heat: 0,
+    contents,
+    temperature: AMBIENT,
     fire: 0,
     smoke: 0,
-    integrity: 100,
     wet: 0,
+    integrity: 100,
+    burnt: false,
+    fuel: MATERIALS[material].fuel + CONTENTS[contents].fuel,
     open: false,
     broken: false,
-    burnt: false,
-    engine: false,
+    drivable: false,
+    ladder: false,
     ...extra,
   };
 }
 
-export function parseFloor(rows: string[], width: number): Tile[][] {
-  return rows.map((row, y) => {
+export interface FloorPlan {
+  plan: string[];
+  /** Optional overlay of the same size; rows may be shorter than the plan. */
+  contents?: string[];
+}
+
+export function parseFloor(floor: FloorPlan, width: number): Tile[][] {
+  return floor.plan.map((row, y) => {
     if (row.length !== width) {
       throw new Error(`Floor row ${y} has length ${row.length}, expected ${width}: "${row}"`);
     }
-    return [...row].map((ch) => {
-      const def = LEGEND[ch];
-      if (!def) throw new Error(`Unknown floor-plan symbol "${ch}" in row ${y}`);
-      return makeTile(def.kind, def.material, { open: !!def.open, engine: !!def.engine });
+    return [...row].map((ch, x) => {
+      const def = PLAN[ch];
+      if (!def) throw new Error(`Unknown plan symbol "${ch}" at ${x},${y}`);
+      const contents = CONTENTS_KEY[floor.contents?.[y]?.[x] ?? ''] ?? 'none';
+      return makeTile(def.kind, def.material, contents, { open: !!def.open, drivable: !!def.drivable });
     });
   });
+}
+
+export interface Dispatch {
+  name: string;
+  type: TruckType;
+  arrivalTurn: number;
+  crew: string[];
 }
 
 export interface Scenario {
@@ -61,16 +96,27 @@ export interface Scenario {
   description: string;
   seed: number;
   /** Floor plans, ground floor first. All floors share the same dimensions. */
-  floors: string[][];
+  floors: FloorPlan[];
   fires: { pos: Pos; intensity: number }[];
   civilians: { name: string; pos: Pos }[];
-  firefighters: { name: string; pos: Pos }[];
-  /** Fire turns simulated before the crew arrives. */
+  /** Trucks responding, with their crews. They arrive over several turns. */
+  dispatch: Dispatch[];
+  /** Fire turns simulated before the first truck arrives. */
   preburn: number;
 }
 
-export function createFirefighter(id: string, name: string, pos: Pos): Unit {
-  return { id, name, kind: 'firefighter', pos: { ...pos }, hp: 100, maxHp: 100, ap: 4, maxAp: 4, water: 6, maxWater: 6, status: 'active' };
+export const CREW_STATS: Record<CrewRole, { ap: number; water: number }> = {
+  /** Hose crews carry water. */
+  engine: { ap: 4, water: 6 },
+  /** Search & rescue crews move faster and carry ladders, but no hose. */
+  ladder: { ap: 5, water: 0 },
+};
+
+export const TRUCK_WATER: Record<TruckType, number> = { engine: 24, ladder: 0 };
+
+export function createFirefighter(id: string, name: string, role: CrewRole, truck?: string, pos: Pos = { floor: 0, x: 0, y: 0 }): Unit {
+  const { ap, water } = CREW_STATS[role];
+  return { id, name, kind: 'firefighter', role, pos: { ...pos }, hp: 100, maxHp: 100, ap, maxAp: ap, water, maxWater: water, status: 'active', truck, aboard: truck };
 }
 
 export function createCivilian(id: string, name: string, pos: Pos): Unit {
@@ -78,22 +124,38 @@ export function createCivilian(id: string, name: string, pos: Pos): Unit {
 }
 
 export function buildState(scenario: Scenario): GameState {
-  const height = scenario.floors[0].length;
-  const width = scenario.floors[0][0].length;
-  const floors = scenario.floors.map((rows, f) => {
-    if (rows.length !== height) throw new Error(`Floor ${f} has ${rows.length} rows, expected ${height}`);
-    return parseFloor(rows, width);
+  const height = scenario.floors[0].plan.length;
+  const width = scenario.floors[0].plan[0].length;
+  const floors = scenario.floors.map((fp, f) => {
+    if (fp.plan.length !== height) throw new Error(`Floor ${f} has ${fp.plan.length} rows, expected ${height}`);
+    return parseFloor(fp, width);
   });
+
+  const trucks: Truck[] = scenario.dispatch.map((d, i) => ({
+    id: `truck${i + 1}`,
+    name: d.name,
+    type: d.type,
+    arrivalTurn: d.arrivalTurn,
+    status: 'enroute',
+    orientation: 'h',
+    water: TRUCK_WATER[d.type],
+    maxWater: TRUCK_WATER[d.type],
+    hydrant: false,
+  }));
+
+  let n = 0;
+  const units: Unit[] = scenario.dispatch.flatMap((d, i) =>
+    d.crew.map((name) => createFirefighter(`ff${++n}`, name, d.type, trucks[i].id)),
+  );
+  units.push(...scenario.civilians.map((c, i) => createCivilian(`cv${i + 1}`, c.name, c.pos)));
 
   const state: GameState = {
     scenarioName: scenario.name,
     width,
     height,
     floors,
-    units: [
-      ...scenario.firefighters.map((u, i) => createFirefighter(`ff${i + 1}`, u.name, u.pos)),
-      ...scenario.civilians.map((u, i) => createCivilian(`cv${i + 1}`, u.name, u.pos)),
-    ],
+    units,
+    trucks,
     turn: 1,
     status: 'playing',
     rngState: scenario.seed,
@@ -103,7 +165,7 @@ export function buildState(scenario: Scenario): GameState {
   for (const { pos, intensity } of scenario.fires) {
     const t = floors[pos.floor][pos.y][pos.x];
     t.fire = intensity;
-    t.heat = 30 + intensity * 20;
+    t.temperature = 200 + intensity * 200;
   }
   return state;
 }
