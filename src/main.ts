@@ -29,7 +29,9 @@ let overlay: Overlay = 'normal';
 let hover: Pos | undefined;
 let hint = { text: '', error: false };
 /** Truck currently being parked, if any. */
-let placing: { truckId: string; orientation: Orientation; reversed: boolean } | undefined;
+let placing: { truckId: string; orientation: Orientation; reversed: boolean; preview?: string } | undefined;
+/** 'mouse', 'touch' or 'pen' — the last pointer used on the map. */
+let lastPointer = 'mouse';
 
 /** R turns the truck a quarter clockwise: front facing left → up → right → down. */
 const FACINGS: { orientation: Orientation; reversed: boolean; label: string }[] = [
@@ -91,9 +93,15 @@ function buildStage(): void {
     hover = undefined;
     renderInspector();
   });
+  canvas.addEventListener('pointerdown', (e) => {
+    lastPointer = e.pointerType;
+  });
   canvas.addEventListener('click', (e) => {
     const p = eventPos(e);
-    if (p) onTileClick(p, tileFraction(e));
+    if (!p) return;
+    // Phones have no hover: a tap also shows the tile's details.
+    hover = p;
+    onTileClick(p, tileFraction(e));
   });
   canvas.addEventListener('contextmenu', (e) => {
     if (!placing) return;
@@ -111,8 +119,14 @@ function buildStage(): void {
 /** Fits the site into the space beside the navigator, keeping tiles square. */
 function layout(): void {
   const width = $('floors').clientWidth - 96;
-  const available = window.innerHeight - 90;
-  const tile = Math.max(14, Math.min(44, Math.floor(Math.min(width / state.width, available / state.height))));
+  let tile: number;
+  if (window.innerWidth < 900) {
+    // Phone: the page scrolls and tiles stay big enough to tap (a wide site scrolls sideways).
+    tile = Math.max(22, Math.min(40, Math.floor(width / state.width)));
+  } else {
+    const available = window.innerHeight - 90;
+    tile = Math.max(14, Math.min(44, Math.floor(Math.min(width / state.width, available / state.height))));
+  }
   canvas.style.width = `${state.width * tile}px`;
   canvas.style.height = `${state.height * tile}px`;
 }
@@ -179,10 +193,17 @@ function onTileClick(p: Pos, frac = { fx: 0.5, fy: 0.5 }): void {
   if (placing) {
     if (p.floor !== 0) return setHintAndRender('Trucks park on the ground floor.', true);
     const truck = truckById(placing.truckId)!;
+    // On touch screens the first tap previews the spot; a second tap on the same tile parks.
+    const key = `${p.x},${p.y}`;
+    if (lastPointer === 'touch' && placing.preview !== key) {
+      placing.preview = key;
+      const err = placementError(state, truck, p, placing.orientation);
+      return setHintAndRender(err ?? `Tap again to park ${truck.name} here, or tap Rotate.`, !!err);
+    }
     if (commit([{ type: 'placeTruck', truckId: truck.id, pos: p, orientation: placing.orientation, reversed: placing.reversed }])) {
       placing = undefined;
       selectedId = state.units.find((u) => u.aboard === truck.id && u.status === 'active')?.id ?? selectedId;
-      setHintAndRender(`${truck.name} parked. Click a crew member on the truck, then a tile next to it to get them off.`);
+      setHintAndRender(`${truck.name} parked. Click (or tap) a crew member on the truck, then a tile next to it to get them off.`);
     }
     return;
   }
@@ -243,7 +264,7 @@ function startPlacing(truck: Truck): void {
   viewFloor = 0; // trucks park on the ground
   placing = { truckId: truck.id, orientation: placing?.orientation ?? 'h', reversed: placing?.reversed ?? false };
   setHintAndRender(
-    `Click a road or driveway tile to park ${truck.name}. R or right-click turns it (the arrow and white headlights mark the front, red lights the back). Esc cancels.`,
+    `Click or tap a road or driveway tile to park ${truck.name}. Rotate, R or right-click turns it (the arrow and white headlights mark the front, red lights the back). Esc cancels.`,
   );
 }
 
@@ -428,6 +449,15 @@ function renderDispatch(): void {
           setHintAndRender('Parking cancelled.');
         } else startPlacing(t);
       });
+      if (placing?.truckId === t.id) {
+        const rot = document.createElement('button');
+        rot.textContent = 'Rotate';
+        rot.addEventListener('click', (e) => {
+          e.stopPropagation(); // don't let the card's click cancel parking
+          rotatePlacement();
+        });
+        head.append(rot);
+      }
     }
     box.append(head);
     // Crew only become available once the truck is parked.
@@ -563,7 +593,7 @@ function renderModal(): void {
       <div class="score">${s.score}</div>
       <button id="again" class="primary">Play again</button>
     </div>`;
-  $('again').addEventListener('click', restart);
+  $('again').addEventListener('click', () => restart());
 }
 
 function renderNavigator(): void {
@@ -602,7 +632,18 @@ function drawAll(time: number): void {
   drawFloor(canvas.getContext('2d')!, state, viewFloor, { selected: sel, hover, stops, mode, overlay, time, placing: placingView });
 }
 
+/** Phone-only bar pinned to the bottom: what's happening, who is selected, End turn. */
+function renderMobileBar(): void {
+  const sel = selected();
+  $('m-status').textContent = hint.text || `Turn ${state.turn} · your move`;
+  $('m-status').className = 'm-status' + (hint.error ? ' error' : '');
+  $('m-unit').textContent = sel ? `${sel.name} · ${sel.ap}/${sel.maxAp} AP` : 'No one selected';
+  ($('m-end-turn') as HTMLButtonElement).disabled = state.status !== 'playing';
+  ($('m-undo') as HTMLButtonElement).disabled = history.length === 0;
+}
+
 function render(): void {
+  renderMobileBar();
   renderSummary();
   renderDispatch();
   renderModes();
@@ -617,8 +658,8 @@ function loop(time: number): void {
   requestAnimationFrame(loop);
 }
 
-function restart(): void {
-  state = newGame(houseFire);
+function restart(saved?: GameState): void {
+  state = saved ?? newGame(houseFire);
   history = [];
   placing = undefined;
   selectedId = undefined;
@@ -699,5 +740,21 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-restart();
-requestAnimationFrame(loop);
+$('m-end-turn').addEventListener('click', doEndTurn);
+$('m-undo').addEventListener('click', undo);
+
+// When the published page is updated while open, carry the game in progress across.
+const hot = (window as unknown as { claude?: { hot?: HotApi } }).claude?.hot;
+interface HotApi {
+  snapshot?: (fn: () => unknown) => void;
+  ready?: (start: (data: unknown) => void) => void;
+  data?: unknown;
+}
+hot?.snapshot?.(() => ({ state }));
+const start = (data: unknown) => {
+  const saved = (data as { state?: GameState } | undefined)?.state;
+  restart(saved && saved.scenarioName === houseFire.name && saved.fans && saved.units.some((u) => u.rank) ? saved : undefined);
+  requestAnimationFrame(loop);
+};
+if (hot?.ready) hot.ready(start);
+else start(hot?.data ?? {});
