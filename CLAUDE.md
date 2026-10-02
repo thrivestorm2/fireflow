@@ -22,7 +22,7 @@ There is no linter; `tsc` strictness is the check.
 ## Architecture
 
 - `src/core/` is pure, deterministic game logic with no DOM access. `src/ui/` (canvas renderer,
-  click → action planning in `intent.ts`) and `src/main.ts` (DOM wiring, keyboard, undo stack) sit on top.
+  tap → action options in `intent.ts`, shown as a tap menu when there's more than one) and `src/main.ts` (DOM wiring, keyboard, undo stack) sit on top.
 - **Immutable state transitions.** `performAction(state, action)` (`actions.ts`) and `endTurn(state)`
   (`game.ts`) `structuredClone` the input and return a new `GameState`; never mutate a state you
   were handed from outside. Undo in `main.ts` is just a stack of previous states for the current turn.
@@ -32,7 +32,7 @@ There is no linter; `tsc` strictness is the check.
 - **Actions** are a discriminated union in `actions.ts`. Each has validation in `actionCost`
   (returns AP cost or an error string) and effects in `performAction`. AP constants live in `COST`
   / `SPRAY`. Ladder-crew-only jobs are gated by `LADDER_JOBS`. Adding an action means touching the
-  union, `actionCost`, `performAction`, usually `ui/intent.ts` and the keyboard/buttons in `main.ts`,
+  union, `actionCost`, `performAction`, usually an option in `clickOptions` (`ui/intent.ts`) — the UI is tap-only, with no mode or action buttons —
   and the README action table.
 - **Turn loop** (`game.ts`): `endTurn` increments the turn, runs the environment `SYSTEMS` in order
   (fire → smoke → fans → structure → exposure → water), arrives due trucks, restores AP, spots victims,

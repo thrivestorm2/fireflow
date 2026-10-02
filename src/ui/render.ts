@@ -1,9 +1,11 @@
 import { canSprayFrom, nozzleRange } from '../core/actions';
 import { AMBIENT, ignitionOf } from '../core/materials';
-import { hydrantAt } from '../core/hoses';
-import { dischargeTiles, footprint, seatOf, supplyTiles, truckTiles } from '../core/trucks';
+import { HOSE, hydrantAt, supplyHops } from '../core/hoses';
+import { AERIAL, aerialStation, aerialTipAt, aerialTipError, dischargeTiles, footprint, inletTiles, seatOf, supplyTiles, truckTiles, turntableTiles } from '../core/trucks';
 import type { Fan, GameState, HoseLine, Orientation, Pos, Tile, Truck, Unit } from '../core/types';
 import { fanRunning } from '../core/ventilation';
+import { DIRS, isOutside, posKey } from '../core/grid';
+import { isExterior, knowledge, showing } from '../core/knowledge';
 
 /** Internal pixel size of a tile; canvases are scaled with CSS. */
 export const TILE = 32;
@@ -23,7 +25,6 @@ export interface ViewState {
   hover?: Pos;
   /** Tiles the selected unit could finish a move on. */
   stops?: Set<string>;
-  mode: string;
   overlay: Overlay;
   time: number;
   placing?: { truck: Truck; orientation: Orientation; reversed: boolean; error: string | null };
@@ -41,7 +42,7 @@ export function siteRect(state: GameState): ViewRect {
  */
 export function shownPos(state: GameState, floor: number, x: number, y: number): Pos {
   const t = state.floors[floor]?.[y]?.[x];
-  if (floor > 0 && t && t.kind === 'air' && !t.ladder) return { floor: 0, x, y };
+  if (floor > 0 && t && t.kind === 'air' && !t.ladder && !aerialTipAt(state, { floor, x, y })) return { floor: 0, x, y };
   return { floor, x, y };
 }
 
@@ -72,10 +73,10 @@ function darken(hex: string, f: number): string {
   return `rgb(${c(16)},${c(8)},${c(0)})`;
 }
 
-function drawBase(g: CanvasRenderingContext2D, t: Tile, px: number, py: number, x: number, y: number): void {
+function drawBase(g: CanvasRenderingContext2D, t: Tile, px: number, py: number, x: number, y: number, known = true): void {
   const S = TILE;
   const base = t.kind === 'hole' ? '#050505' : MATERIAL_COLOR[t.material] ?? '#888888';
-  g.fillStyle = t.burnt ? darken(base, 0.35) : base;
+  g.fillStyle = t.burnt && known ? darken(base, 0.35) : base;
   g.fillRect(px, py, S, S);
 
   switch (t.kind) {
@@ -382,6 +383,58 @@ function drawOverlay(g: CanvasRenderingContext2D, t: Tile, px: number, py: numbe
   }
 }
 
+/** Thermal imaging: cool is dark, hot runs through red and orange to white; flames read white-hot. */
+function drawThermal(g: CanvasRenderingContext2D, t: Tile, px: number, py: number): void {
+  const heat = t.fire > 0 ? 1 : Math.min(1, (t.temperature - AMBIENT) / 600);
+  if (heat < 0.03) return;
+  const r = 255;
+  const gr = Math.round(heat < 0.6 ? heat * 200 : 120 + (heat - 0.6) * 340);
+  const b = Math.round(heat < 0.8 ? 0 : (heat - 0.8) * 1200);
+  g.fillStyle = `rgba(${r},${Math.min(255, gr)},${Math.min(255, b)},${0.25 + heat * 0.6})`;
+  g.fillRect(px, py, TILE, TILE);
+}
+
+/**
+ * Smoke and fire showing at an opening on the outside of the building: puffs
+ * of smoke drifting out (thicker and darker the worse it is inside, a thin seep
+ * round a closed frame), the glow of fire behind glass, flames through an open
+ * or broken window or door.
+ */
+function drawShowing(g: CanvasRenderingContext2D, state: GameState, p: Pos, show: { smoke: number; fire: number; heat: number }, px: number, py: number, time: number): void {
+  const S = TILE;
+  const out = DIRS.find(([dx, dy]) => {
+    const n = state.floors[p.floor][p.y + dy]?.[p.x + dx];
+    return !!n && isOutside(n);
+  });
+  if (!out) return;
+  const t = state.floors[p.floor][p.y][p.x];
+  if (show.fire > 0) {
+    if (t.open) drawFire(g, { ...t, fire: show.fire }, px, py, time, p.x * 13 + p.y * 7);
+    else {
+      g.fillStyle = `rgba(255,120,20,${0.35 + 0.15 * Math.sin(time / 180 + p.x)})`;
+      g.fillRect(px + 4, py + 4, S - 8, S - 8);
+    }
+  } else if (show.heat > 300 && !t.open) {
+    g.fillStyle = 'rgba(255,90,20,0.18)'; // glass darkened and glowing from the heat behind it
+    g.fillRect(px + 4, py + 4, S - 8, S - 8);
+  }
+  if (show.smoke < 6) return;
+  const [dx, dy] = out;
+  const puffs = 2 + Math.round(show.smoke / 20);
+  const shade = Math.round(150 - Math.min(1, show.smoke / 100) * 110); // light grey → near black
+  for (let i = 0; i < puffs; i++) {
+    const life = ((time / 1400 + i / puffs + (p.x * 0.37 + p.y * 0.61)) % 1 + 1) % 1;
+    const dist = life * S * 1.6;
+    const spread = Math.sin(i * 2.4 + p.x) * S * 0.3 * life;
+    const cx = px + S / 2 + dx * (S / 2 + dist) + dy * spread;
+    const cy = py + S / 2 + dy * (S / 2 + dist) + dx * spread;
+    g.fillStyle = `rgba(${shade},${shade},${shade + 6},${(1 - life) * Math.min(0.75, 0.2 + show.smoke / 140)})`;
+    g.beginPath();
+    g.arc(cx, cy, 4 + life * 9, 0, Math.PI * 2);
+    g.fill();
+  }
+}
+
 /** Tiles close to their ignition point get a warning border. */
 function atRisk(t: Tile): boolean {
   if (t.fire > 0 || t.fuel <= 0 || t.wet > 0) return false;
@@ -510,7 +563,7 @@ function drawTruckShape(g: CanvasRenderingContext2D, truck: Truck, tiles: Pos[],
   box(L - 3, L, 3, 8, '#ff1744'); // tail lights
   box(L - 3, L, D - 8, D - 3, '#ff1744');
 
-  if (truck.type === 'ladder') {
+  if (truck.type === 'ladder' && !truck.aerialTip) {
     g.strokeStyle = '#e0e0e0';
     g.lineWidth = 2;
     g.beginPath();
@@ -582,12 +635,15 @@ export function drawFloor(g: CanvasRenderingContext2D, state: GameState, floor: 
   const H = state.height;
   const shown = (x: number, y: number) => shownPos(state, floor, x, y);
   const tileOf = (p: Pos) => state.floors[p.floor][p.y][p.x];
+  // Fog of war: fire, smoke and heat inside are only drawn where the crew can perceive them.
+  const know = knowledge(state);
+  const known = (p: Pos) => isExterior(state, p) || know.seen.has(posKey(p));
 
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
       const at = shown(x, y);
       const t = tileOf(at);
-      drawBase(g, t, px(x), py(y), x, y);
+      drawBase(g, t, px(x), py(y), x, y, known(at));
       if (t.contents !== 'tree') drawContents(g, t, px(x), py(y));
       if (t.contents === 'hydrant') drawHydrantState(g, state, at, px(x), py(y), view.time);
       // Centre line between the two lanes of a road at least four tiles wide.
@@ -620,7 +676,15 @@ export function drawFloor(g: CanvasRenderingContext2D, state: GameState, floor: 
       const at = shown(x, y);
       const t = tileOf(at);
       if (t.contents === 'tree') drawContents(g, t, px(x), py(y));
-      drawOverlay(g, t, px(x), py(y), view.overlay);
+      if (!known(at)) {
+        // Unknown inside: fogged. The thermal camera still reads heat through smoke.
+        g.fillStyle = 'rgba(8,10,14,0.62)';
+        g.fillRect(px(x), py(y), S, S);
+        if (view.overlay === 'heat' && know.thermal.has(posKey(at))) drawThermal(g, t, px(x), py(y));
+        continue;
+      }
+      if (view.overlay === 'heat' && !isOutside(t)) drawThermal(g, t, px(x), py(y));
+      else drawOverlay(g, t, px(x), py(y), view.overlay);
       if (t.fire > 0) drawFire(g, t, px(x), py(y), view.time, x * 31 + y * 17 + at.floor * 7);
       if (atRisk(t)) {
         g.strokeStyle = '#ff8c1a';
@@ -628,6 +692,16 @@ export function drawFloor(g: CanvasRenderingContext2D, state: GameState, floor: 
         g.strokeRect(px(x) + 1.5, py(y) + 1.5, S - 3, S - 3);
         g.setLineDash([]);
       }
+    }
+  }
+
+  // Size-up from the street: smoke and fire showing at the building's windows and doors.
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const at = shown(x, y);
+      if (at.floor !== floor) continue;
+      const show = showing(state, at);
+      if (show) drawShowing(g, state, at, show, px(x), py(y), view.time);
     }
   }
 
@@ -639,10 +713,30 @@ export function drawFloor(g: CanvasRenderingContext2D, state: GameState, floor: 
   }
 
   drawHoses(g, state, seen, view.time);
+  for (const truck of state.trucks) drawAerial(g, truck, rect, floor);
 
   const sel = view.selected;
+  const station = sel && sel.status === 'active' && !view.placing ? aerialStation(state, sel) : undefined;
+  if (station && sel) {
+    // On the aerial: where the tip can go on this (upper) floor, and the fire the master stream can hit.
+    const tip = station.aerialTip;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const at = { floor, x, y };
+        const shownAt = shown(x, y);
+        const stream =
+          !!tip && !sel.line && shownAt.floor === tip.floor && tileOf(shownAt).fire > 0 && known(shownAt) && !canSprayFrom(state, tip, shownAt, AERIAL.streamRange);
+        const spot = !stream && floor > 0 && !(tip && tip.floor === floor && tip.x === x && tip.y === y) && !aerialTipError(state, station, at);
+        if (!stream && !spot) continue;
+        g.strokeStyle = stream ? '#2196f3' : 'rgba(255,255,255,0.22)';
+        g.lineWidth = 2;
+        g.strokeRect(px(x) + 2, py(y) + 2, S - 4, S - 4);
+        g.lineWidth = 1;
+      }
+    }
+  }
   if (sel && sel.status === 'active' && !view.placing) {
-    if ((view.mode === 'auto' || view.mode === 'move') && view.stops) {
+    if (view.stops) {
       for (const key of view.stops) {
         const [f, x, y] = key.split(',').map(Number);
         if (!seen({ floor: f, x, y })) continue;
@@ -654,14 +748,15 @@ export function drawFloor(g: CanvasRenderingContext2D, state: GameState, floor: 
     }
     const nozzle = state.hoses.find((l) => l.id === sel.line && l.kind === 'attack');
     const reach = nozzleRange(state, sel);
-    if ((view.mode === 'spray' || view.mode === 'auto') && nozzle && !sel.aboard) {
+    if (nozzle && !sel.aboard) {
       for (let y = 0; y < H; y++) {
         for (let x = 0; x < W; x++) {
           const at = shown(x, y);
           if (at.floor !== sel.pos.floor) continue;
           const t = tileOf(at);
-          if ((view.mode === 'spray' || t.fire > 0) && !canSprayFrom(state, sel.pos, at, reach)) {
-            g.strokeStyle = t.fire > 0 ? '#2196f3' : 'rgba(33,150,243,0.5)';
+          const fire = t.fire > 0 && known(at);
+          if (fire && !canSprayFrom(state, sel.pos, at, reach)) {
+            g.strokeStyle = '#2196f3';
             g.lineWidth = 2;
             g.strokeRect(px(x) + 2, py(y) + 2, S - 4, S - 4);
             g.lineWidth = 1;
@@ -724,6 +819,7 @@ function drawHoses(g: CanvasRenderingContext2D, state: GameState, seen: (p: Pos)
   const S = TILE;
   const cx = (p: Pos) => p.x * S + S / 2;
   const cy = (p: Pos) => p.y * S + S / 2;
+  const hops = supplyHops(state);
   state.hoses.forEach((line, i) => {
     const truck = state.trucks.find((t) => t.id === line.truckId);
     if (!truck) return;
@@ -732,7 +828,8 @@ function drawHoses(g: CanvasRenderingContext2D, state: GameState, seen: (p: Pos)
     // Start at the coupling on the truck.
     if (seen(line.tiles[0]) && seen(line.origin)) pts.push(line.origin);
     for (const p of line.tiles) pts.push(seen(p) ? p : null);
-    const charged = line.kind === 'supply' ? isSupplyCharged(state, line) : truck.water > 0;
+    const flow = line.kind === 'supply' ? supplyFlow(state, line, hops) : truck.water > 0 ? 1 : 0;
+    const charged = flow !== 0;
     g.strokeStyle = HOSE_COLOR[line.size];
     g.lineWidth = HOSE_WIDTH[line.size] + (charged ? 1 : 0);
     g.lineCap = 'round';
@@ -752,11 +849,14 @@ function drawHoses(g: CanvasRenderingContext2D, state: GameState, seen: (p: Pos)
     g.stroke();
     g.setLineDash([]);
     if (line.kind === 'supply' && charged) {
-      // Water moving along the supply line.
-      g.strokeStyle = 'rgba(255,255,255,0.55)';
+      // A thin blue line of water down the middle of the LDH, with ripples moving along it.
+      g.strokeStyle = '#1e88e5';
       g.lineWidth = 2;
+      g.stroke();
+      g.strokeStyle = 'rgba(179,229,252,0.8)';
       g.setLineDash([3, 9]);
-      g.lineDashOffset = time / 60;
+      // The path runs from the truck outwards; a positive offset moves the ripples back toward the truck.
+      g.lineDashOffset = (flow * time) / 60;
       g.stroke();
       g.setLineDash([]);
       g.lineDashOffset = 0;
@@ -786,8 +886,19 @@ function drawHoses(g: CanvasRenderingContext2D, state: GameState, seen: (p: Pos)
   });
 }
 
-function isSupplyCharged(state: GameState, line: HoseLine): boolean {
-  return !!line.hydrant && hydrantAt(state, line.hydrant)?.state === 'flowing';
+/**
+ * Water in a supply line and which way it runs along the line's path (which
+ * starts at the truck it was pulled from): 1 toward that truck, -1 away from
+ * it, 0 dry. A flowing hydrant feeds its truck; in a truck-to-truck line water
+ * runs from the truck nearer the hydrant.
+ */
+function supplyFlow(state: GameState, line: HoseLine, hops: Map<string, number>): number {
+  if (line.hydrant) return hydrantAt(state, line.hydrant)?.state === 'flowing' ? 1 : 0;
+  if (!line.toTruck) return 0;
+  const from = hops.get(line.truckId);
+  const to = hops.get(line.toTruck);
+  if (from === undefined || to === undefined) return 0;
+  return from <= to ? -1 : 1;
 }
 
 /** Small badge on a hydrant showing how far the crew has got with it. */
@@ -851,9 +962,10 @@ function drawFan(g: CanvasRenderingContext2D, state: GameState, fan: Fan, px: nu
 }
 
 /**
- * An engine's hose connections: halfway down each long side a red 1¾″ coupling
- * toward the front and a blue 2½″ one toward the back, and a yellow 5″ supply
- * coupling on the rear. Greyed out when in use; outlined when the selected
+ * A truck's hose connections. Engines: halfway down each long side a red 1¾″
+ * coupling toward the front and a blue 2½″ one toward the back. Engines and
+ * ladder trucks: a yellow 5″ supply coupling on the rear, and a 5″ inlet on
+ * each side; ladder trucks also show their turntable. Greyed out when in use; outlined when the selected
  * firefighter can take that line.
  */
 function drawCouplings(g: CanvasRenderingContext2D, state: GameState, truck: Truck, rect: ViewRect, view: ViewState): void {
@@ -896,7 +1008,7 @@ function drawCouplings(g: CanvasRenderingContext2D, state: GameState, truck: Tru
     const my = rear.reduce((n, p) => n + (p.y - rect.y0) * S + S / 2, 0) / rear.length;
     const cx = mx + (truck.orientation === 'h' ? backward * (S / 4) : 0);
     const cy = my + (truck.orientation === 'v' ? backward * (S / 4) : 0);
-    const inUse = state.hoses.some((l) => l.truckId === truck.id && l.kind === 'supply');
+    const inUse = state.hoses.filter((l) => l.truckId === truck.id && l.kind === 'supply').length >= HOSE.maxSupplyLines;
     roundRect(g, cx - 10, cy - 10, 20, 20, 4, '#37474f');
     g.fillStyle = inUse ? '#616161' : HOSE_COLOR['5'];
     g.beginPath();
@@ -915,5 +1027,98 @@ function drawCouplings(g: CanvasRenderingContext2D, state: GameState, truck: Tru
       g.stroke();
     }
     g.lineWidth = 1;
+  }
+  // 5″ side inlets (truck-to-truck supply), on the outer edge of each long side.
+  const inletUsed = state.hoses.some((l) => l.toTruck === truck.id);
+  const holdingSupply = !!sel && state.hoses.some((l) => l.id === sel.line && l.kind === 'supply' && l.truckId !== truck.id);
+  for (const d of inletTiles(truck)) {
+    const outward = d.side === 0 ? -1 : 1;
+    const cx = (d.pos.x - rect.x0) * S + S / 2 + (truck.orientation === 'v' ? outward * (S / 2 - 7) : 0);
+    const cy = (d.pos.y - rect.y0) * S + S / 2 + (truck.orientation === 'h' ? outward * (S / 2 - 7) : 0);
+    g.fillStyle = '#cfd8dc';
+    g.beginPath();
+    g.arc(cx, cy, 6, 0, Math.PI * 2);
+    g.fill();
+    g.fillStyle = inletUsed ? '#616161' : HOSE_COLOR['5'];
+    g.beginPath();
+    g.arc(cx, cy, 4, 0, Math.PI * 2);
+    g.fill();
+    const reachable = holdingSupply && !inletUsed && sel!.pos.floor === 0 && Math.abs(sel!.pos.x - d.pos.x) + Math.abs(sel!.pos.y - d.pos.y) === 1;
+    if (reachable) {
+      g.strokeStyle = `rgba(255,255,255,${0.6 + 0.4 * Math.sin(view.time / 200)})`;
+      g.lineWidth = 2;
+      g.beginPath();
+      g.arc(cx, cy, 9, 0, Math.PI * 2);
+      g.stroke();
+      g.lineWidth = 1;
+    }
+  }
+
+  // A ladder truck's turntable deck: firefighters can stand here to work the aerial.
+  const deck = turntableTiles(truck);
+  if (deck.length) {
+    const xs = deck.map((p) => (p.x - rect.x0) * S);
+    const ys = deck.map((p) => (p.y - rect.y0) * S);
+    const x = Math.min(...xs) + 3;
+    const y = Math.min(...ys) + 3;
+    roundRect(g, x, y, Math.max(...xs) + S - 3 - x, Math.max(...ys) + S - 3 - y, 6, '#455a64');
+    const [cx, cy] = deckCentre(deck, rect);
+    g.strokeStyle = '#cfd8dc';
+    g.lineWidth = 2;
+    g.beginPath();
+    g.arc(cx, cy, 10, 0, Math.PI * 2);
+    g.stroke();
+    g.lineWidth = 1;
+  }
+}
+
+/** Screen centre of a turntable deck. */
+function deckCentre(deck: Pos[], rect: ViewRect): [number, number] {
+  const S = TILE;
+  return [
+    deck.reduce((n, p) => n + (p.x - rect.x0) * S + S / 2, 0) / deck.length,
+    deck.reduce((n, p) => n + (p.y - rect.y0) * S + S / 2, 0) / deck.length,
+  ];
+}
+
+/**
+ * A raised aerial, seen from above: the ladder from the turntable out to the
+ * tip, with the tip's platform. The tip is labelled with its floor when it
+ * isn't on the one being viewed.
+ */
+function drawAerial(g: CanvasRenderingContext2D, truck: Truck, rect: ViewRect, floor: number): void {
+  const deck = turntableTiles(truck);
+  const tip = truck.aerialTip;
+  if (!deck.length || !tip || truck.status !== 'placed') return;
+  const S = TILE;
+  const [x0, y0] = deckCentre(deck, rect);
+  const x1 = (tip.x - rect.x0) * S + S / 2;
+  const y1 = (tip.y - rect.y0) * S + S / 2;
+  const len = Math.hypot(x1 - x0, y1 - y0) || 1;
+  const nx = (-(y1 - y0) / len) * 5;
+  const ny = ((x1 - x0) / len) * 5;
+  g.strokeStyle = '#e0e0e0';
+  g.lineWidth = 2;
+  g.beginPath();
+  for (const k of [1, -1]) {
+    g.moveTo(x0 + k * nx, y0 + k * ny);
+    g.lineTo(x1 + k * nx, y1 + k * ny);
+  }
+  for (let d = 8; d < len; d += 7) {
+    const fx = x0 + ((x1 - x0) * d) / len;
+    const fy = y0 + ((y1 - y0) * d) / len;
+    g.moveTo(fx + nx, fy + ny);
+    g.lineTo(fx - nx, fy - ny);
+  }
+  g.stroke();
+  g.lineWidth = 1;
+  roundRect(g, x1 - 9, y1 - 9, 18, 18, 3, tip.floor === floor ? '#c62828' : 'rgba(198,40,40,0.55)');
+  if (tip.floor !== floor) {
+    g.fillStyle = '#ffffff';
+    g.font = 'bold 9px system-ui, sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText(`F${tip.floor + 1}`, x1, y1);
+    g.textBaseline = 'alphabetic';
   }
 }

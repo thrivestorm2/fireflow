@@ -39,7 +39,7 @@ button.primary:hover:not(:disabled) { background: #c4461a; }
 
 .topbar {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 16px;
   padding: 10px 16px;
   border-bottom: 1px solid var(--border);
@@ -47,7 +47,9 @@ button.primary:hover:not(:disabled) { background: #c4461a; }
 }
 .topbar h1 { margin: 0; font-size: 20px; }
 .scenario { color: var(--muted); }
-.turn { margin-left: auto; font-weight: 600; font-size: 16px; }
+.turn { font-weight: 600; font-size: 16px; }
+.turn-buttons { display: flex; gap: 8px; }
+.topbar .hint { flex: 1; min-width: 200px; margin: 0; min-height: 0; }
 
 .layout {
   display: grid;
@@ -80,6 +82,8 @@ button.primary:hover:not(:disabled) { background: #c4461a; }
   gap: 8px;
   flex: 0 0 72px;
 }
+.view-buttons { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.view-button { width: 44px; height: 40px; padding: 0; font-size: 20px; line-height: 1; }
 .floor-arrow {
   position: relative;
   width: 64px;
@@ -138,7 +142,7 @@ button.primary:hover:not(:disabled) { background: #c4461a; }
 .modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 .modes button { padding: 6px 4px; }
 .modes kbd { color: var(--muted); font-size: 11px; margin-left: 2px; }
-.hint { margin: 8px 0 0; min-height: 2.8em; color: var(--muted); font-size: 13px; }
+.hint { color: var(--muted); font-size: 13px; }
 .hint.error { color: var(--bad); }
 
 .inspector { margin-top: 10px; font-size: 13px; color: var(--muted); min-height: 5.6em; }
@@ -148,6 +152,7 @@ button.primary:hover:not(:disabled) { background: #c4461a; }
 .log { list-style: none; margin: 0; padding: 0; overflow-y: auto; font-size: 13px; }
 .log li { padding: 3px 0; border-bottom: 1px solid #20262f; }
 .log li .t { color: var(--muted); margin-right: 6px; font-variant-numeric: tabular-nums; }
+.log li .by { display: inline-block; min-width: 2.2em; margin-right: 6px; padding: 0 4px; border-radius: 3px; background: #2a313c; color: var(--text); font-weight: 700; font-size: 11px; text-align: center; }
 .log li.good { color: #8fd694; }
 .log li.bad { color: #ff8a80; }
 
@@ -183,10 +188,13 @@ button.primary:hover:not(:disabled) { background: #c4461a; }
 .truck-head .tstatus { color: var(--muted); font-size: 12px; margin-left: auto; text-align: right; }
 .truck-head button { padding: 3px 10px; }
 .truck.enroute { opacity: 0.6; }
+.alarm-row { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
+button.alarm { background: #8e1b1b; border-color: #c62828; color: #fff; font-weight: 700; }
+button.alarm:hover:not(:disabled) { background: #a82222; }
 .truck.staged { cursor: pointer; }
 .truck.staged:hover { border-color: #f5c518; }
 .truck.staged.placing { border-color: #f5c518; box-shadow: 0 0 0 1px #f5c518 inset; }
-.at-scene { background: #2e7d32; color: #fff; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 6px; border-radius: 3px; }
+.at-scene { background: #f5c518; color: #1a1a1a; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 6px; border-radius: 3px; }
 .truck .crewlist { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
 .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; border: 1px solid #000; }
 .dot.engine { background: #f5c518; }
@@ -247,9 +255,27 @@ button.primary:hover:not(:disabled) { background: #c4461a; }
   .m-status.error { color: var(--bad); }
   .mobilebar button { padding: 10px 14px; }
   .topbar .turn { margin-left: 0; }
+  .topbar .turn-buttons, .topbar .hint { display: none; } /* the bottom bar has them */
   .stage { overflow-x: auto; }
   .stage canvas { max-width: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .banner { animation: none; }
 }
+
+/* Tap menu: what a tap could mean, when it could mean more than one thing. */
+.tapmenu {
+  position: fixed;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  min-width: 200px;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+.tapmenu button { display: flex; justify-content: space-between; gap: 12px; text-align: left; padding: 8px 10px; }
+.tapmenu .ap { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }

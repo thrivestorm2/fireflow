@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildState } from '../src/core/building';
-import { fireSystem } from '../src/core/fire';
+import { FIRE, fireSystem } from '../src/core/fire';
+import { smokeSystem } from '../src/core/smoke';
 import { endTurn, newGame } from '../src/core/game';
 import { houseFire } from '../src/scenarios/house';
 import { miniScenario } from './helpers';
@@ -72,5 +73,69 @@ describe('fire propagation', () => {
     const s = newGame(houseFire);
     expect(s.floors[0][16][0].temperature).toBe(20); // the road
     expect(s.floors[0][3][18].temperature).toBeGreaterThanOrEqual(400); // the burning stove
+  });
+});
+
+describe('compartment fire behaviour', () => {
+  const sofas = ['', ' sssss'];
+  const sealed = () => room([{ x: 1, y: 1, intensity: 2 }], ['#######', '#,,,,,#', '#######'], sofas);
+  const withWindow = () => room([{ x: 1, y: 1, intensity: 2 }], ['.......', '#,,,,,#', '###W###', '.......'], sofas);
+
+  it('a fire starved of air can’t grow past the ventilation limit', () => {
+    let s = sealed();
+    for (let i = 0; i < 8; i++) {
+      s = endTurn(s, [fireSystem]);
+      for (const t of s.floors[0][1]) expect(t.fire).toBeLessThanOrEqual(FIRE.ventLimitedMax);
+    }
+  });
+
+  it('flashover lights the whole room at once, but only if the fire can get air', () => {
+    const heat = (s: ReturnType<typeof room>) => {
+      for (const t of s.floors[0][1]) if (t.kind === 'floor') t.temperature = 900;
+      return s;
+    };
+    const open = withWindow();
+    open.floors[0][2][3].open = true;
+    const lit = endTurn(heat(open), [fireSystem]);
+    expect(lit.floors[0][1].filter((t) => t.kind === 'floor' && t.fire > 0)).toHaveLength(5);
+    expect(lit.log.some((l) => /Flashover/.test(l.text))).toBe(true);
+
+    const shut = endTurn(heat(sealed()), [fireSystem]);
+    expect(shut.log.some((l) => /Flashover/.test(l.text))).toBe(false);
+  });
+
+  it('an open door to the outside feeds the fire like an open window', () => {
+    let s = room([{ x: 1, y: 1, intensity: 2 }], ['.......', '#,,,,,#', '###d###', '.......'], sofas);
+    for (let i = 0; i < 10; i++) s = endTurn(s, [fireSystem]);
+    expect(s.log.some((l) => /Flashover/.test(l.text)) || s.floors[0][1].some((t) => t.fire === 3)).toBe(true);
+  });
+
+  /** Fire room on the left, a room on the right behind a door (open or closed). */
+  const twoRooms = (door: 'D' | 'd') => room([{ x: 1, y: 1, intensity: 2 }], ['#########', `#,,,${door},,,#`, '#########']);
+  const smokeAfter = (s: ReturnType<typeof room>, turns: number) => {
+    for (let i = 0; i < turns; i++) s = endTurn(s, [smokeSystem]);
+    return s.floors[0][1][7].smoke;
+  };
+
+  it('smoke leaks around a closed door, but far less than through an open one', () => {
+    const closed = smokeAfter(twoRooms('D'), 4);
+    const open = smokeAfter(twoRooms('d'), 4);
+    expect(closed).toBeGreaterThan(0);
+    expect(open).toBeGreaterThan(closed * 2);
+  });
+
+  it('smoke rises up an open stairwell and fills the floor above first', () => {
+    let s = buildState(
+      miniScenario(
+        [
+          ['#######', '#S,,,,#', '#######'],
+          ['#######', '#S,,,,#', '#######'],
+        ],
+        { fires: [{ pos: { floor: 0, x: 5, y: 1 }, intensity: 2 }] },
+      ),
+    );
+    for (let i = 0; i < 6; i++) s = endTurn(s, [smokeSystem]);
+    const avg = (f: number) => s.floors[f][1].slice(1, 6).reduce((n, t) => n + t.smoke, 0) / 5;
+    expect(avg(1)).toBeGreaterThan(avg(0));
   });
 });

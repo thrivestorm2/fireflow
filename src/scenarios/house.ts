@@ -1,23 +1,24 @@
 import type { Scenario } from '../core/building';
 
-/** Two-storey family home with a kitchen fire. Trucks arrive over the first turns. */
+/** Two-storey family home; the fire starts somewhere likely, different each game. Trucks arrive over the first turns. */
 export const houseFire: Scenario = {
-  name: 'Kitchen Fire — Two-Storey House',
+  name: 'House Fire — Two-Storey House',
   description:
-    'A stove fire has spread into the kitchen cabinets. Neighbours say three residents are still inside — ' +
-    'nobody knows where. The front door is locked. Park your trucks, find the residents and put the fire out.',
+    'Smoke is showing from a two-storey house. Neighbours say three residents are still inside — nobody knows ' +
+    'where, or where the fire started. The front door is locked. Size it up from the outside: watch where smoke ' +
+    'and fire show at the windows, find the fire and the residents, and put it out.',
   seed: 20261001,
   preburn: 3,
   floors: [
     {
-      // Ground floor: house, yards, sidewalks, road and hydrants.
+      // Ground floor: house, yards, sidewalks, road and hydrants. Kitchen and living room open onto the hall.
       plan: [
         '..........................',
         '..........................',
         '....##W#####W#W#####W#.::.',
         '....#,,,,,,,w_Swttttt#.::.',
         '....#,,,,,,,w_Swttttt#.::.',
-        '....W,,,,,,,D__Dttttt#.::.',
+        '....W,,,,,,,d__dttttt#.::.',
         '....#,,,,,,,w__wttttt#.::.',
         '....#wwwwDwww__wwwDww#.::.',
         '....#,,,,,,,w__wttttt#.::.',
@@ -57,14 +58,14 @@ export const houseFire: Scenario = {
       ],
     },
     {
-      // Upper floor
+      // Upper floor: Maria's bedroom door (west) is open; Theo's rooms are behind closed doors.
       plan: [
         '                          ',
         '                          ',
         '    ##W#####W#W#####W#    ',
         '    #,,,,,,,w_Sw,,,,,#    ',
         '    #,,,,,,,w_Sw,,,,,#    ',
-        '    W,,,,,,,D__D,,,,,W    ',
+        '    W,,,,,,,d__D,,,,,W    ',
         '    #,,,,,,,w__w,,,,,#    ',
         '    #wwwwDwww__wwwDww#    ',
         '    #tttttttw__w,,,,,#    ',
@@ -129,10 +130,8 @@ export const houseFire: Scenario = {
       ],
     },
   ],
-  fires: [
-    { pos: { floor: 0, x: 18, y: 3 }, intensity: 2 },
-    { pos: { floor: 0, x: 19, y: 3 }, intensity: 1 },
-  ],
+  fires: [],
+  randomOrigin: true,
   civilians: [
     { name: 'Maria', pos: { floor: 1, x: 6, y: 4 } },
     { name: 'Theo', pos: { floor: 1, x: 18, y: 9 } },

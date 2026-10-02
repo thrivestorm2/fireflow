@@ -1,30 +1,35 @@
-import { actionCost, performAction, type Action } from './core/actions';
+import { performAction, type Action } from './core/actions';
+import { ALARM, nextAlarm, ordinal } from './core/alarms';
 import { exposureDamage } from './core/exposure';
+import { isKnown, knowledge, showing } from './core/knowledge';
 import { endTurn, newGame, summarize } from './core/game';
-import { conditions, isAdjacent, neighbors, samePos, tileAt } from './core/grid';
+import { conditions, samePos, tileAt } from './core/grid';
 import { CONTENTS, ignitionOf, MATERIALS } from './core/materials';
 import { reachable } from './core/pathing';
-import { HOSE_SIZES, HYDRANT_LABEL, HYDRANT_TOTAL, hoseLeft, hydrantAt, linesThrough, supplyFor } from './core/hoses';
-import { dischargeTiles, placementError, seatOf, supplyTiles, truckTiles } from './core/trucks';
+import { HOSE_SIZES, HYDRANT_LABEL, HYDRANT_TOTAL, hoseLeft, hydrantAt, isSupplied, linesThrough, supplyFor } from './core/hoses';
+import { dischargeTiles, inletTiles, placementError, seatOf, supplyTiles, truckTiles, turntableAt } from './core/trucks';
 import type { GameState, HoseSize, Orientation, Pos, Truck, Unit } from './core/types';
 import { houseFire } from './scenarios/house';
-import { MODES, planClick, type Mode } from './ui/intent';
-import { drawFloor, isVisible, shownPos, TILE, type Overlay } from './ui/render';
+import { clickOptions, type Option } from './ui/intent';
+import { drawFloor, isVisible, shownPos, TILE, unitLabel, type Overlay } from './ui/render';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
-const OVERLAYS: { overlay: Overlay; label: string }[] = [
-  { overlay: 'normal', label: 'Normal' },
-  { overlay: 'heat', label: 'Heat' },
-  { overlay: 'smoke', label: 'Smoke' },
-  { overlay: 'structure', label: 'Structure' },
+const OVERLAYS: { overlay: Overlay; label: string; symbol: string }[] = [
+  { overlay: 'normal', label: 'Normal view', symbol: '👁️' },
+  { overlay: 'heat', label: 'Thermal camera (H)', symbol: '🌡️' },
+  { overlay: 'smoke', label: 'Smoke (V)', symbol: '🌫️' },
+  { overlay: 'structure', label: 'Structure', symbol: '🧱' },
 ];
 
-let state: GameState = newGame(houseFire);
+/** A fresh seed for each game, so the fire starts somewhere different. The game itself stays replayable from its seed. */
+const freshSeed = (): number => crypto.getRandomValues(new Uint32Array(1))[0];
+const newHouseFire = (): GameState => newGame({ ...houseFire, seed: freshSeed() });
+
+let state: GameState = newHouseFire();
 /** States before each action this turn, for undo. */
 let history: GameState[] = [];
 let selectedId: string | undefined;
-let mode: Mode = 'auto';
 let overlay: Overlay = 'normal';
 let hover: Pos | undefined;
 let hint = { text: '', error: false };
@@ -78,6 +83,7 @@ function buildStage(): void {
   nav.className = 'floor-nav';
   nav.setAttribute('aria-label', 'Floors');
   nav.innerHTML = `
+    <div id="overlays" class="view-buttons" role="group" aria-label="View"></div>
     <button id="floor-up" class="floor-arrow" title="Up a floor (↑)">▲<span class="fire-dot" id="fire-up"></span></button>
     <button id="floor-num" class="floor-num" title="Back to the ground floor (Home)"></button>
     <div id="floor-name" class="floor-name"></div>
@@ -101,7 +107,7 @@ function buildStage(): void {
     if (!p) return;
     // Phones have no hover: a tap also shows the tile's details.
     hover = p;
-    onTileClick(p, tileFraction(e));
+    onTileClick(p, tileFraction(e), { x: e.clientX, y: e.clientY });
   });
   canvas.addEventListener('contextmenu', (e) => {
     if (!placing) return;
@@ -148,12 +154,14 @@ function tileFraction(e: MouseEvent): { fx: number; fy: number } {
 }
 
 /**
- * A click on an engine's hose connections: the half toward the front is the
- * red 1¾″ coupling, the half toward the back the blue 2½″.
+ * A click on a truck's hose connections: the rear 5″ supply coupling, a side
+ * inlet, or an engine's crosslays, where the half toward the front is the red
+ * 1¾″ coupling and the half toward the back the blue 2½″.
  */
-function couplingClick(p: Pos, frac: { fx: number; fy: number }): { size: HoseSize; side?: 0 | 1 } | undefined {
+function couplingClick(p: Pos, frac: { fx: number; fy: number }): { size: HoseSize; side?: 0 | 1; inlet?: Truck } | undefined {
   for (const truck of state.trucks) {
     if (supplyTiles(truck).some((q) => samePos(q, p))) return { size: '5' };
+    if (inletTiles(truck).some((d) => samePos(d.pos, p))) return { size: '5', inlet: truck };
     const d = dischargeTiles(truck).find((d) => samePos(d.pos, p));
     if (!d) continue;
     const along = truck.orientation === 'h' ? frac.fx : frac.fy;
@@ -187,7 +195,8 @@ function commit(actions: Action[]): boolean {
   return !error;
 }
 
-function onTileClick(p: Pos, frac = { fx: 0.5, fy: 0.5 }): void {
+function onTileClick(p: Pos, frac = { fx: 0.5, fy: 0.5 }, at?: { x: number; y: number }): void {
+  closeTapMenu();
   if (state.status !== 'playing') return;
 
   if (placing) {
@@ -214,16 +223,18 @@ function onTileClick(p: Pos, frac = { fx: 0.5, fy: 0.5 }): void {
   const coupling = couplingClick(p, frac);
   if (coupling && sel && !sel.aboard) {
     commit([
-      coupling.size === '5'
-        ? { type: 'takeLine', unitId: sel.id, kind: 'supply' }
-        : { type: 'takeLine', unitId: sel.id, kind: 'attack', size: coupling.size, side: coupling.side },
+      coupling.inlet
+        ? { type: 'inlet', unitId: sel.id, truckId: coupling.inlet.id }
+        : coupling.size === '5'
+          ? { type: 'takeLine', unitId: sel.id, kind: 'supply' }
+          : { type: 'takeLine', unitId: sel.id, kind: 'attack', size: coupling.size, side: coupling.side },
     ]);
     return;
   }
-  // Clicking another firefighter selects them, unless an explicit mode targets that tile.
-  if (own && (!sel || (own.id !== sel.id && (mode === 'auto' || mode === 'move')))) {
+  // Clicking another firefighter selects them.
+  if (own && (!sel || own.id !== sel.id)) {
     selectedId = own.id;
-    return setHintAndRender(`${own.name} selected.`);
+    return setHintAndRender(`${own.name} selected. Tap a tile to act, or tap ${own.name} for jobs right here.`);
   }
   // Clicking a crew member seated on a truck selects them.
   const seated = firefighters().find((u) => u.aboard && u.status === 'active' && samePos(seatOf(state, u) ?? NOWHERE, p));
@@ -233,20 +244,55 @@ function onTileClick(p: Pos, frac = { fx: 0.5, fy: 0.5 }): void {
   }
   // Clicking elsewhere on a parked truck selects the next crew member still aboard.
   const truck = state.trucks.find((t) => t.status === 'placed' && footprintHas(t, p));
-  if (truck && (!sel || !sel.aboard || sel.aboard !== truck.id)) {
+  const toTurntable = !!turntableAt(state, p) && !!sel && !sel.aboard; // climbing onto the turntable
+  if (truck && !toTurntable && (!sel || !sel.aboard || sel.aboard !== truck.id)) {
     const crew = state.units.find((u) => u.aboard === truck.id && u.status === 'active');
     if (crew) {
       selectedId = crew.id;
       return setHintAndRender(`${crew.name} selected — click a tile next to ${truck.name} to get off.`);
     }
   }
-  if (!sel) return setHintAndRender('Select a firefighter first (Tab).', true);
+  if (!sel) return setHintAndRender('Tap a firefighter to select them.', true);
   if (sel.aboard && truckById(sel.aboard)?.status !== 'placed') {
     return setHintAndRender(`${sel.name} is still on ${truckById(sel.aboard)?.name}. Park the truck first.`, true);
   }
-  const plan = planClick(state, sel, p, mode);
-  if ('error' in plan) return setHintAndRender(plan.error, true);
-  commit(plan.actions);
+  // The floor being viewed, open air included (shown as the ground below): somewhere the aerial could go.
+  const choice = clickOptions(state, sel, p, { floor: viewFloor, x: p.x, y: p.y });
+  if ('error' in choice) return setHintAndRender(choice.error, true);
+  if (choice.options.length === 1 || !at) return void commit(choice.options[0].actions);
+  openTapMenu(choice.options, at);
+}
+
+// ---------------------------------------------------------------- tap menu
+
+/** When a tap could mean several things, a small menu at the tap lists them with their AP cost. */
+function openTapMenu(options: Option[], at: { x: number; y: number }): void {
+  closeTapMenu();
+  const menu = document.createElement('div');
+  menu.id = 'tapmenu';
+  menu.className = 'tapmenu';
+  menu.setAttribute('role', 'menu');
+  for (const o of options) {
+    const b = document.createElement('button');
+    b.setAttribute('role', 'menuitem');
+    b.innerHTML = `<span>${o.label}</span><span class="ap">${o.cost} AP</span>`;
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeTapMenu();
+      commit(o.actions);
+    });
+    menu.append(b);
+  }
+  document.body.append(menu);
+  // Keep it on screen.
+  const r = menu.getBoundingClientRect();
+  menu.style.left = `${Math.max(8, Math.min(at.x + 8, window.innerWidth - r.width - 8))}px`;
+  menu.style.top = `${Math.max(8, Math.min(at.y + 8, window.innerHeight - r.height - 8))}px`;
+  (menu.firstElementChild as HTMLButtonElement | null)?.focus();
+}
+
+function closeTapMenu(): void {
+  document.getElementById('tapmenu')?.remove();
 }
 
 const NOWHERE: Pos = { floor: -1, x: -1, y: -1 };
@@ -288,7 +334,7 @@ function doEndTurn(): void {
   const arrived = state.trucks.filter((t) => t.status === 'staged' && t.arrivalTurn === state.turn);
   setHint(
     arrived.length
-      ? `${arrived.map((t) => t.name).join(' and ')} at scene — click it in Dispatch to park.`
+      ? `${arrived.map((t) => t.name).join(' and ')} at scene requesting assignment.`
       : `Turn ${state.turn}. Your move.`,
   );
   render();
@@ -319,56 +365,6 @@ function cycleSelection(): void {
   render();
 }
 
-function setMode(m: Mode): void {
-  mode = m;
-  setHintAndRender(MODES.find((x) => x.mode === m)!.hint);
-}
-
-type UnitButton = 'drop' | 'attack' | 'attack25' | 'supply' | 'nozzle' | 'pack' | 'hydrant' | 'ladder' | 'search' | 'fan';
-const UNIT_BUTTONS: UnitButton[] = ['drop', 'attack', 'attack25', 'supply', 'nozzle', 'pack', 'hydrant', 'ladder', 'search', 'fan'];
-
-/** The action behind each side-panel button, for the selected firefighter. */
-function buttonAction(kind: UnitButton, u: Unit): Action | undefined {
-  switch (kind) {
-    case 'drop':
-    case 'ladder':
-    case 'search':
-      return { type: kind, unitId: u.id };
-    case 'fan': {
-      // Shut down a fan next to you, or set one up at an adjacent open door/window.
-      const near = state.fans.find((f) => f.pos.floor === u.pos.floor && Math.abs(f.pos.x - u.pos.x) + Math.abs(f.pos.y - u.pos.y) <= 1);
-      if (near) return { type: 'removeFan', unitId: u.id, target: near.pos };
-      const opening = neighbors(state, u.pos).find((p) => {
-        const t = tileAt(state, p)!;
-        return (t.kind === 'door' || t.kind === 'window') && t.open;
-      });
-      return opening && { type: 'placeFan', unitId: u.id, target: opening };
-    }
-    case 'attack':
-      return { type: 'takeLine', unitId: u.id, kind: 'attack', size: '1.75' };
-    case 'attack25':
-      return { type: 'takeLine', unitId: u.id, kind: 'attack', size: '2.5' };
-    case 'supply':
-      return { type: 'takeLine', unitId: u.id, kind: 'supply' };
-    case 'nozzle':
-      return { type: u.line ? 'dropLine' : 'pickupLine', unitId: u.id };
-    case 'pack':
-      return { type: 'returnLine', unitId: u.id };
-    case 'hydrant': {
-      const h = state.hydrants.find((h) => isAdjacent(h.pos, u.pos));
-      return h && { type: 'hydrant', unitId: u.id, target: h.pos };
-    }
-  }
-}
-
-function unitAction(kind: UnitButton): void {
-  const u = selected();
-  const a = u && buttonAction(kind, u);
-  if (!u) return setHintAndRender('Select a firefighter first.', true);
-  if (!a) return setHintAndRender(kind === 'fan' ? 'Stand beside an open door or window first.' : 'Stand next to a hydrant first.', true);
-  commit([a]);
-}
-
 // ---------------------------------------------------------------- panels
 
 function renderSummary(): void {
@@ -376,7 +372,7 @@ function renderSummary(): void {
   $('turn').innerHTML = `Turn ${state.turn}<span class="phase">${state.status === 'playing' ? 'your move' : state.status}</span>`;
   $('scenario').textContent = state.scenarioName;
   const rows: [string, string | number][] = [
-    ['Burning tiles', s.burning],
+    ['Fire seen (tiles)', knownFire(state)],
     ['Structure intact', `${s.structureSaved}%`],
     ['Civilians inside', s.inside],
     ['  not yet found', s.missing],
@@ -416,7 +412,23 @@ function crewCard(u: Unit): HTMLButtonElement {
   return b;
 }
 
+function renderAlarm(): void {
+  const btn = $('alarm') as HTMLButtonElement;
+  if (state.alarm >= ALARM.maxLevel) {
+    btn.textContent = `${ordinal(state.alarm)} alarm`;
+    btn.disabled = true;
+    btn.title = 'Every available company is committed.';
+    return;
+  }
+  const next = nextAlarm(state);
+  const turns = next.trucks.map((t) => t.arrivalTurn);
+  btn.textContent = `🚨 Strike ${ordinal(next.level)} alarm`;
+  btn.disabled = state.status !== 'playing';
+  btn.title = `${next.trucks.map((t) => t.name).join(', ')} · due turns ${Math.min(...turns)}–${Math.max(...turns)}`;
+}
+
 function renderDispatch(): void {
+  renderAlarm();
   const el = $('dispatch');
   el.innerHTML = '';
   for (const t of state.trucks) {
@@ -430,14 +442,21 @@ function renderDispatch(): void {
       status = `en route — arrives turn ${t.arrivalTurn}${n === 1 ? ' (next)' : ''}`;
     } else if (t.status === 'staged') {
       status = placing?.truckId === t.id ? 'click a road tile to park · click here to cancel' : 'click to park';
-    } else if (t.type === 'engine') {
-      const supply = supplyFor(state, t);
-      const src = supply ? (supply.state === 'flowing' ? ' · hydrant ✓' : ' · hydrant ' + supply.state) : '';
-      status = `💧 ${t.water}/${t.maxWater} · hose ${hoseLeft(state, t)}/${t.hose}${src}`;
     } else {
-      status = 'parked';
+      const supply = supplyFor(state, t);
+      const relay = state.hoses.some((l) => l.toTruck && (l.truckId === t.id || l.toTruck === t.id));
+      const src = isSupplied(state, t)
+        ? ' · supplied ✓'
+        : supply
+          ? ` · hydrant ${HYDRANT_LABEL[supply.state]}`
+          : relay
+            ? ' · relay, no water yet'
+            : '';
+      const tank = t.maxWater ? `💧 ${t.water}/${t.maxWater} · ` : '';
+      const aerial = t.type === 'ladder' ? (t.aerialTip ? ' · aerial up' : ' · aerial bedded') : '';
+      status = `${tank}hose ${hoseLeft(state, t)}/${t.hose}${src}${aerial}`;
     }
-    const badge = t.status === 'staged' ? '<span class="at-scene">At Scene</span>' : '';
+    const badge = t.status === 'staged' ? '<span class="at-scene">Staging</span>' : '';
     head.innerHTML = `<span class="dot ${t.type}"></span><span class="tname">${t.name}</span>${badge}<span class="tstatus">${status}</span>`;
     if (t.status === 'staged') {
       // The whole card toggles parking: click once to pick the truck up, again to put it back.
@@ -472,42 +491,21 @@ function renderDispatch(): void {
   }
 }
 
-function renderModes(): void {
-  const el = $('modes');
-  el.innerHTML = '';
-  for (const m of MODES) {
-    const b = document.createElement('button');
-    b.className = m.mode === mode ? 'active' : '';
-    b.title = m.hint;
-    b.innerHTML = `${m.label}<kbd>${m.key}</kbd>`;
-    b.addEventListener('click', () => setMode(m.mode));
-    el.append(b);
-  }
+function renderView(): void {
   const ov = $('overlays');
   ov.innerHTML = '';
   for (const o of OVERLAYS) {
     const b = document.createElement('button');
-    b.className = o.overlay === overlay ? 'active' : '';
-    b.textContent = o.label;
+    b.className = 'view-button' + (o.overlay === overlay ? ' active' : '');
+    b.textContent = o.symbol;
+    b.title = o.label;
+    b.setAttribute('aria-label', o.label);
+    b.setAttribute('aria-pressed', String(o.overlay === overlay));
     b.addEventListener('click', () => {
       overlay = o.overlay;
       render();
     });
     ov.append(b);
-  }
-  const sel = selected();
-  for (const kind of UNIT_BUTTONS) {
-    const btn = $(kind) as HTMLButtonElement;
-    const a = sel && buttonAction(kind, sel);
-    const cost = a ? actionCost(state, a) : 'Select a firefighter';
-    btn.disabled = typeof cost !== 'number';
-    btn.title = `${btn.dataset.label}${typeof cost === 'number' ? ` — ${cost} AP` : ` — ${cost}`}`;
-    if (kind === 'nozzle') btn.textContent = sel?.line ? 'Put hose down' : 'Pick up hose';
-    if (kind === 'fan') btn.textContent = a?.type === 'removeFan' ? 'Remove fan' : 'Place fan';
-    if (kind === 'hydrant') {
-      const h = sel && state.hydrants.find((h) => isAdjacent(h.pos, sel.pos));
-      btn.textContent = h && (h.state === 'opening' || h.state === 'flowing') ? 'Hydrant' : 'Hook up hydrant';
-    }
   }
   const h = $('hint');
   h.textContent = hint.text;
@@ -522,6 +520,17 @@ function renderInspector(): void {
     return;
   }
   const kind = t.kind === 'door' || t.kind === 'window' ? `${t.broken ? 'broken' : t.open ? 'open' : 'closed'} ${t.kind}` : t.kind;
+  if (!isKnown(state, hover)) {
+    // Fog of war: the layout is known, conditions aren't. An officer's thermal camera reads the heat.
+    const thermal = knowledge(state).thermal.has(`${hover.floor},${hover.x},${hover.y}`);
+    el.innerHTML = `
+      <dl>
+        <dt>Tile</dt><dd>${kind}</dd>
+        <dt>Condition</dt><dd>unknown — nobody can see in here</dd>
+        ${thermal ? `<dt>Thermal camera</dt><dd>${t.fire > 0 ? 'white-hot (fire)' : `~${Math.round(t.temperature / 10) * 10}°C`}</dd>` : ''}
+      </dl>`;
+    return;
+  }
   const ign = ignitionOf(t.material, t.contents);
   const people = state.units
     .filter((u) => u.status === 'active' && !u.aboard && (u.kind === 'firefighter' || u.found) && u.pos.floor === hover!.floor && u.pos.x === hover!.x && u.pos.y === hover!.y)
@@ -529,7 +538,7 @@ function renderInspector(): void {
   const extras = [
     t.drivable ? 'drivable' : '',
     t.ladder ? 'ladder' : '',
-    t.locked ? 'locked' : '',
+    t.locked ? (t.reinforced ? 'locked, reinforced' : 'locked') : '',
     t.searched ? 'searched' : '',
     state.fans.some((f) => f.pos.floor === hover!.floor && f.pos.x === hover!.x && f.pos.y === hover!.y) ? 'fan' : '',
   ]
@@ -574,7 +583,12 @@ function renderLog(): void {
   $('log').innerHTML = state.log
     .slice(-60)
     .reverse()
-    .map((l) => `<li class="${l.tone}"><span class="t">T${l.turn}</span>${l.text}</li>`)
+    .map((l) => {
+      // Credit the apparatus: E1, L7…
+      const by = truckById(l.truckId);
+      const tag = by ? `<span class="by">${unitLabel(by.name)}</span>` : '';
+      return `<li class="${l.tone}"><span class="t">T${l.turn}</span>${tag}${l.text}</li>`;
+    })
     .join('');
 }
 
@@ -596,17 +610,37 @@ function renderModal(): void {
   $('again').addEventListener('click', () => restart());
 }
 
+/** Burning tiles the crew can see (fog of war), on one floor or all of them. */
+function knownFire(s: GameState, floor?: number): number {
+  let n = 0;
+  s.floors.forEach((rows, f) => {
+    if (floor !== undefined && f !== floor) return;
+    rows.forEach((row, y) => row.forEach((t, x) => (n += t.fire > 0 && isKnown(s, { floor: f, x, y }) ? 1 : 0)));
+  });
+  return n;
+}
+
+/** Whether smoke (or fire) is showing at any window or door on that floor. */
+function smokeShowing(s: GameState, floor: number): boolean {
+  return s.floors[floor].some((row, y) =>
+    row.some((_, x) => {
+      const show = showing(s, { floor, x, y });
+      return !!show && (show.smoke >= 6 || show.fire > 0);
+    }),
+  );
+}
+
 function renderNavigator(): void {
   const top = state.floors.length - 1;
-  const burning = (f: number) => state.floors[f].flat().some((t) => t.fire > 0);
-  const fireAbove = state.floors.some((_, f) => f > viewFloor && burning(f));
-  const fireBelow = state.floors.some((_, f) => f < viewFloor && burning(f));
+  const hint = (floors: number[]) =>
+    floors.some((f) => knownFire(state, f) > 0) ? '🔥' : floors.some((f) => smokeShowing(state, f)) ? '💨' : '';
+  const range = (from: number, to: number) => Array.from({ length: Math.max(0, to - from) }, (_, i) => from + i);
   ($('floor-up') as HTMLButtonElement).disabled = viewFloor >= top;
   ($('floor-down') as HTMLButtonElement).disabled = viewFloor <= 0;
-  $('fire-up').textContent = fireAbove ? '🔥' : '';
-  $('fire-down').textContent = fireBelow ? '🔥' : '';
+  $('fire-up').textContent = hint(range(viewFloor + 1, top + 1));
+  $('fire-down').textContent = hint(range(0, viewFloor));
   $('floor-num').textContent = String(viewFloor + 1);
-  const count = state.floors[viewFloor].flat().filter((t) => t.fire > 0).length;
+  const count = knownFire(state, viewFloor);
   $('floor-name').innerHTML = `${levelName(viewFloor)}${count ? `<br><span class="fire-count">🔥 ${count}</span>` : ''}`;
 }
 
@@ -629,7 +663,7 @@ function drawAll(time: number): void {
     reversed: placing.reversed,
     error: hover ? placementError(state, truckById(placing.truckId)!, hover, placing.orientation) : 'no position',
   };
-  drawFloor(canvas.getContext('2d')!, state, viewFloor, { selected: sel, hover, stops, mode, overlay, time, placing: placingView });
+  drawFloor(canvas.getContext('2d')!, state, viewFloor, { selected: sel, hover, stops, overlay, time, placing: placingView });
 }
 
 /** Phone-only bar pinned to the bottom: what's happening, who is selected, End turn. */
@@ -646,7 +680,7 @@ function render(): void {
   renderMobileBar();
   renderSummary();
   renderDispatch();
-  renderModes();
+  renderView();
   renderInspector();
   renderLog();
   renderNavigator();
@@ -659,33 +693,33 @@ function loop(time: number): void {
 }
 
 function restart(saved?: GameState): void {
-  state = saved ?? newGame(houseFire);
+  state = saved ?? newHouseFire();
   history = [];
   placing = undefined;
   selectedId = undefined;
-  mode = 'auto';
   viewFloor = 0;
   buildStage();
   const first = state.trucks.find((t) => t.status === 'staged');
-  if (first) setHint(`${first.name} at scene — click it in Dispatch to park.`);
+  if (first) setHint(`${first.name} at scene requesting assignment.`);
   render();
 }
 
 // ---------------------------------------------------------------- wiring
 
 $('end-turn').addEventListener('click', doEndTurn);
+$('alarm').addEventListener('click', () => commit([{ type: 'alarm' }]));
 $('undo').addEventListener('click', undo);
-for (const kind of UNIT_BUTTONS) {
-  const btn = $(kind);
-  btn.dataset.label = btn.textContent ?? kind;
-  btn.addEventListener('click', () => unitAction(kind));
-}
+// A tap anywhere else closes the tap menu.
+document.addEventListener('pointerdown', (e) => {
+  if (!(e.target instanceof Node) || !document.getElementById('tapmenu')?.contains(e.target)) {
+    if (e.target !== canvas) closeTapMenu();
+  }
+});
 window.addEventListener('resize', layout);
 
 window.addEventListener('keydown', (e) => {
+  // Optional shortcuts; everything is also a tap on the map or a button.
   if (e.target instanceof HTMLInputElement) return;
-  const m = MODES.find((x) => x.key === e.key);
-  if (m) return setMode(m.mode);
   switch (e.key.toLowerCase()) {
     case 'tab':
       e.preventDefault();
@@ -695,28 +729,8 @@ window.addEventListener('keydown', (e) => {
       return doEndTurn();
     case 'z':
       return undo();
-    case 'g':
-      return unitAction('drop');
     case 'r':
       return rotatePlacement();
-    case 'a':
-      return unitAction('attack');
-    case 'd':
-      return unitAction('attack25');
-    case 's':
-      return unitAction('supply');
-    case 'n':
-      return unitAction('nozzle');
-    case 'b':
-      return unitAction('pack');
-    case 'y':
-      return unitAction('hydrant');
-    case 'l':
-      return unitAction('ladder');
-    case 'e':
-      return unitAction('search');
-    case 'p':
-      return unitAction('fan');
     case 'h':
       overlay = overlay === 'heat' ? 'normal' : 'heat';
       return render();
@@ -732,11 +746,12 @@ window.addEventListener('keydown', (e) => {
     case 'home':
       return setFloor(0);
     case 'escape':
+      closeTapMenu();
       if (placing) {
         placing = undefined;
         return setHintAndRender('Parking cancelled.');
       }
-      return setMode('auto');
+      return;
   }
 });
 
@@ -753,7 +768,7 @@ interface HotApi {
 hot?.snapshot?.(() => ({ state }));
 const start = (data: unknown) => {
   const saved = (data as { state?: GameState } | undefined)?.state;
-  restart(saved && saved.scenarioName === houseFire.name && saved.fans && saved.units.some((u) => u.rank) ? saved : undefined);
+  restart(saved && saved.scenarioName === houseFire.name && saved.fans && saved.units.some((u) => u.rank) && saved.alarm ? saved : undefined);
   requestAnimationFrame(loop);
 };
 if (hot?.ready) hot.ready(start);

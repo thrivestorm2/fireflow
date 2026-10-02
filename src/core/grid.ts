@@ -91,6 +91,104 @@ export function isShaft(below: Tile, above: Tile): boolean {
   return above.kind === 'hole' || above.kind === 'vent' || (above.kind === 'stairs' && below.kind === 'stairs');
 }
 
+/**
+ * The rooms on one floor: interior open space split at doorways (door tiles
+ * belong to no room). Broken-through walls and holes join rooms into one.
+ * Outside tiles are left out. Each room is a list of [x, y].
+ */
+export function interiorSpaces(floors: Tile[][][], f: number): [number, number][][] {
+  const inRoom = (t: Tile) => isOpenAir(t) && !isOutside(t) && t.kind !== 'door';
+  const rows = floors[f];
+  const seen = rows.map((r) => r.map(() => false));
+  const out: [number, number][][] = [];
+  for (let y = 0; y < rows.length; y++) {
+    for (let x = 0; x < rows[y].length; x++) {
+      if (seen[y][x] || !inRoom(rows[y][x])) continue;
+      const space: [number, number][] = [];
+      const queue: [number, number][] = [[x, y]];
+      seen[y][x] = true;
+      while (queue.length) {
+        const [cx, cy] = queue.pop()!;
+        space.push([cx, cy]);
+        for (const [dx, dy] of DIRS) {
+          const n = rows[cy + dy]?.[cx + dx];
+          if (!n || seen[cy + dy][cx + dx] || !inRoom(n)) continue;
+          seen[cy + dy][cx + dx] = true;
+          queue.push([cx + dx, cy + dy]);
+        }
+      }
+      out.push(space);
+    }
+  }
+  return out;
+}
+
+export interface SpaceMap {
+  /** Rooms, floor by floor (see interiorSpaces). */
+  spaces: { floor: number; tiles: [number, number][] }[];
+  /** Rooms joined by a shaft (stairs, a collapsed floor): [lower, upper] indexes into `spaces`. */
+  shafts: [number, number][];
+  /** Rooms on the same floor joined by an open doorway: index pairs into `spaces`. */
+  doorways: [number, number][];
+}
+
+/** Every room in the building, which open into the room above, and which open into each other. */
+export function spaceMap(floors: Tile[][][]): SpaceMap {
+  const spaces: SpaceMap['spaces'] = [];
+  const index = floors.map((rows) => rows.map((row) => row.map(() => -1)));
+  floors.forEach((_, f) =>
+    interiorSpaces(floors, f).forEach((tiles) => {
+      for (const [x, y] of tiles) index[f][y][x] = spaces.length;
+      spaces.push({ floor: f, tiles });
+    }),
+  );
+  const shafts = new Map<string, [number, number]>();
+  for (let f = 0; f + 1 < floors.length; f++) {
+    floors[f].forEach((row, y) =>
+      row.forEach((t, x) => {
+        const lo = index[f][y][x];
+        const hi = index[f + 1][y][x];
+        if (lo >= 0 && hi >= 0 && isShaft(t, floors[f + 1][y][x])) shafts.set(`${lo},${hi}`, [lo, hi]);
+      }),
+    );
+  }
+  const doorways = new Map<string, [number, number]>();
+  floors.forEach((rows, f) =>
+    rows.forEach((row, y) =>
+      row.forEach((t, x) => {
+        if (t.kind !== 'door' || !t.open) return;
+        const rooms = new Set<number>();
+        for (const [dx, dy] of DIRS) {
+          const i = index[f][y + dy]?.[x + dx];
+          if (i !== undefined && i >= 0) rooms.add(i);
+        }
+        const list = [...rooms].sort((a, b) => a - b);
+        for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) doorways.set(`${list[i]},${list[j]}`, [list[i], list[j]]);
+      }),
+    ),
+  );
+  return { spaces, shafts: [...shafts.values()], doorways: [...doorways.values()] };
+}
+
+/**
+ * Closed doors leak smoke and hot gas around their edges. Calls `fn` with the
+ * open tiles on either side of each closed door.
+ */
+export function forEachClosedDoor(floors: Tile[][][], fn: (f: number, a: [number, number], b: [number, number]) => void): void {
+  floors.forEach((rows, f) =>
+    rows.forEach((row, y) =>
+      row.forEach((t, x) => {
+        if (t.kind !== 'door' || t.open) return;
+        for (const [dx, dy] of [[1, 0], [0, 1]] as const) {
+          const a = rows[y - dy]?.[x - dx];
+          const b = rows[y + dy]?.[x + dx];
+          if (a && b && isOpenAir(a) && isOpenAir(b)) fn(f, [x - dx, y - dy], [x + dx, y + dy]);
+        }
+      }),
+    ),
+  );
+}
+
 export function forEachTile(state: GameState, fn: (t: Tile, p: Pos) => void): void {
   state.floors.forEach((rows, floor) =>
     rows.forEach((row, y) => row.forEach((t, x) => fn(t, { floor, x, y }))),

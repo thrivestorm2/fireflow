@@ -1,10 +1,10 @@
 import type { Rng } from './rng';
-import type { GameState, LogEntry } from './types';
+import type { GameState, Log } from './types';
 
 export interface SimContext {
   state: GameState;
   rng: Rng;
-  log: (text: string, tone?: LogEntry['tone']) => void;
+  log: Log;
 }
 
 /**

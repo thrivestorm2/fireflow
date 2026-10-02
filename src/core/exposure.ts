@@ -8,7 +8,7 @@ import type { GameState, Unit } from './types';
  */
 export const EXPOSURE = {
   firefighter: { perFire: 15, heatThreshold: 250, heatFactor: 0.06, smokeThreshold: Infinity, smokeFactor: 0 },
-  civilian: { perFire: 30, heatThreshold: 80, heatFactor: 0.08, smokeThreshold: 30, smokeFactor: 0.2 },
+  civilian: { perFire: 30, heatThreshold: 80, heatFactor: 0.15, smokeThreshold: 30, smokeFactor: 0.35 },
 } as const;
 
 export function exposureDamage(state: GameState, u: Unit): number {
@@ -33,7 +33,7 @@ export const exposureSystem: SimSystem = {
       u.hp = 0;
       if (u.kind === 'firefighter') {
         u.status = 'down';
-        log(`${u.name} is down!`, 'bad');
+        log(`${u.name} is down!`, 'bad', u.truck);
       } else {
         u.status = 'dead';
         log(u.found ? `${u.name} has succumbed to the fire.` : 'A missing resident has succumbed to the smoke.', 'bad');

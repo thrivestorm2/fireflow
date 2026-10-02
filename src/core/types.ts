@@ -72,8 +72,10 @@ export interface Tile {
   open: boolean;
   /** Windows that shattered (or were broken) cannot be closed again. */
   broken: boolean;
-  /** Locked doors must be forced open by a ladder crew. */
+  /** Locked doors must be forced open. Any crew can force a normal one. */
   locked: boolean;
+  /** Reinforced (locked) doors take a ladder crew to force. */
+  reinforced: boolean;
   /** A firefighter has looked here for victims. */
   searched: boolean;
   /** Trucks can park here (road, driveway). */
@@ -150,6 +152,8 @@ export interface Truck {
   hose: number;
   /** Ventilation fans still on the truck. */
   fans: number;
+  /** Ladder trucks: where the raised aerial's tip rests; unset while it's bedded. */
+  aerialTip?: Pos;
 }
 
 /** A positive-pressure fan blowing through an opening (door or window) into the building. */
@@ -181,6 +185,8 @@ export interface HoseLine {
   holder?: string;
   /** Supply line coupled to this hydrant. */
   hydrant?: Pos;
+  /** Supply line coupled to this truck's side inlet (truck to truck). */
+  toTruck?: string;
 }
 
 /** capped → (remove cap) → uncapped → (couple hose) → connected → (open) → opening → flowing */
@@ -200,7 +206,12 @@ export interface LogEntry {
   turn: number;
   text: string;
   tone: 'info' | 'good' | 'bad';
+  /** The truck that did it, or whose crew did: shown as its unit abbreviation (E1, L7) in the radio log. */
+  truckId?: string;
 }
+
+/** Adds a radio log entry, optionally credited to a truck and its crew. */
+export type Log = (text: string, tone?: LogEntry['tone'], truckId?: string) => void;
 
 export interface GameState {
   scenarioName: string;
@@ -214,6 +225,8 @@ export interface GameState {
   fans: Fan[];
   /** Counter for hose line and fan ids. */
   nextLineId: number;
+  /** Alarm level: 1 for the companies sent with the call, +1 for each further alarm struck. */
+  alarm: number;
   turn: number;
   status: GameStatus;
   /** Seeded RNG state, so a game is fully reproducible from its seed and actions. */

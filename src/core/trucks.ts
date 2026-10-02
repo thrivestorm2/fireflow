@@ -1,5 +1,5 @@
 import { TRUCK_SPECS } from './building';
-import { inBounds, posKey, tileAt } from './grid';
+import { inBounds, posKey, samePos, tileAt } from './grid';
 import type { GameState, Orientation, Pos, Truck, TruckType, Unit } from './types';
 
 /**
@@ -57,11 +57,82 @@ export function dischargeTiles(truck: Truck): { side: 0 | 1; pos: Pos }[] {
   ].filter((d): d is { side: 0 | 1; pos: Pos } => !!d.pos);
 }
 
-/** An engine's 5″ supply line coupling: the rear tiles of the truck. */
+/**
+ * The 5″ inlets where a supply line from another truck couples on: one on each
+ * long side, the row just behind an engine's crosslays, and halfway along a
+ * ladder truck (ahead of the turntable).
+ */
+export function inletTiles(truck: Truck): { side: 0 | 1; pos: Pos }[] {
+  const tiles = seatTiles(truck); // front to back, two per row across
+  const rows = tiles.length / 2;
+  const row = truck.type === 'engine' ? Math.floor(tiles.length / 4) + 1 : Math.floor(rows / 2);
+  return [
+    { side: 0, pos: tiles[row * 2] },
+    { side: 1, pos: tiles[row * 2 + 1] },
+  ].filter((d): d is { side: 0 | 1; pos: Pos } => !!d.pos);
+}
+
+/** The 5″ supply line coupling (engines and ladder trucks): the rear tiles of the truck. */
 export function supplyTiles(truck: Truck): Pos[] {
-  if (truck.type !== 'engine') return [];
   const tiles = seatTiles(truck);
   return tiles.slice(-2);
+}
+
+/**
+ * The aerial: a ladder truck's turntable is a deck across the truck one row ahead
+ * of the rear coupling (two tiles, so it can be reached from either side).
+ * Raised, its tip rests on an open-air or roof tile up to `reach` tiles away
+ * (counting diagonals as one) on an upper floor: a route up to the roof or a
+ * window beside it. A firefighter on the turntable or at the tip works it:
+ * swings it, and flows the master stream from the tip nozzle. Fed by a hydrant
+ * (directly or relayed through another truck) the stream runs off the supply;
+ * otherwise each flow drains `water` from the ladder truck's small tank. The
+ * stream floods an area: tiles within `area` of the target (diagonals too) that
+ * the water can reach from it — walls, closed doors and closed windows stop it.
+ */
+export const AERIAL = { reach: 7, streamRange: 5, area: 1, knockdown: 3, cooling: 600, splashCooling: 250, water: 3 } as const;
+
+export function turntableTiles(truck: Truck): Pos[] {
+  if (truck.type !== 'ladder') return [];
+  const tiles = seatTiles(truck);
+  return tiles.slice(-4, -2);
+}
+
+/** The placed ladder truck whose turntable deck includes `p`. */
+export function turntableAt(state: GameState, p: Pos): Truck | undefined {
+  return state.trucks.find((t) => turntableTiles(t).some((q) => samePos(q, p)));
+}
+
+/** The ladder truck whose raised aerial tip is at `p`. */
+export function aerialTipAt(state: GameState, p: Pos): Truck | undefined {
+  return state.trucks.find((t) => t.aerialTip && samePos(t.aerialTip, p));
+}
+
+/** The ladder truck whose aerial `u` can work: standing on its turntable or at its tip. */
+export function aerialStation(state: GameState, u: Unit): Truck | undefined {
+  if (u.aboard) return undefined;
+  return turntableAt(state, u.pos) ?? aerialTipAt(state, u.pos);
+}
+
+/** The truck whose raised aerial links `a` and `b` (turntable to tip, either way). */
+export function aerialLink(state: GameState, a: Pos, b: Pos): Truck | undefined {
+  return state.trucks.find((t) => {
+    if (!t.aerialTip) return false;
+    const onDeck = (p: Pos) => turntableTiles(t).some((q) => samePos(q, p));
+    return (onDeck(a) && samePos(b, t.aerialTip)) || (onDeck(b) && samePos(a, t.aerialTip));
+  });
+}
+
+/** Why the aerial can't be swung to `tip`, or null if it can. */
+export function aerialTipError(state: GameState, truck: Truck, tip: Pos): string | null {
+  const deck = turntableTiles(truck);
+  if (!deck.length) return 'Only ladder trucks have an aerial';
+  const t = tileAt(state, tip);
+  if (!t || tip.floor < 1) return 'Raise the aerial to an upper floor or the roof';
+  if (t.kind !== 'air' && t.kind !== 'roof') return 'The tip must rest in open air or on the roof';
+  const reach = Math.min(...deck.map((b) => Math.max(Math.abs(tip.x - b.x), Math.abs(tip.y - b.y))));
+  if (reach > AERIAL.reach) return `Out of reach (max ${AERIAL.reach} tiles from the turntable)`;
+  return null;
 }
 
 /** Map of tile key → truck occupying it. */

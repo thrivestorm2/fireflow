@@ -1,6 +1,6 @@
 import { posKey, samePos } from './grid';
 import type { SimSystem } from './systems';
-import type { GameState, HoseLine, HoseSize, Hydrant, HydrantState, LogEntry, Pos, Truck, Unit } from './types';
+import type { GameState, HoseLine, HoseSize, Hydrant, HydrantState, Log, Pos, Truck, Unit } from './types';
 
 /**
  * What each hose does. Attack lines: 1¾″ is light and quick; 2½″ moves more
@@ -17,9 +17,9 @@ export const HOSE_SIZES: Record<HoseSize, { label: string; water: number; knockd
 export const ATTACK_SIZES: HoseSize[] = ['1.75', '2.5'];
 
 export const HOSE = {
-  /** Supply lines (to a hydrant) per engine. Attack lines are limited by the couplings: one of each size per side. */
-  maxSupplyLines: 1,
-  /** Water units a flowing hydrant adds to its engine's tank each turn. */
+  /** Supply lines (to a hydrant or another truck) per truck. Attack lines are limited by the couplings: one of each size per side. */
+  maxSupplyLines: 2,
+  /** Water units a flowing hydrant adds to each supplied engine's tank each turn. */
   hydrantRefill: 8,
 } as const;
 
@@ -74,7 +74,44 @@ export function supplyFor(state: GameState, truck: Truck): Hydrant | undefined {
   return state.hydrants.find((h) => h.lineId && state.hoses.find((l) => l.id === h.lineId)?.truckId === truck.id);
 }
 
-type Log = (text: string, tone?: LogEntry['tone']) => void;
+/**
+ * Trucks with hydrant water: a flowing hydrant on one of their own supply lines,
+ * or a supply line (either direction) to a truck that has it. Relays chain.
+ */
+export function suppliedTrucks(state: GameState): Set<string> {
+  return new Set(supplyHops(state).keys());
+}
+
+/**
+ * Supplied trucks and how many truck-to-truck lines the water crosses to reach
+ * them: 0 on a flowing hydrant, 1 relayed from such a truck, and so on. Water
+ * in a relay line flows from the truck with fewer hops to the one with more.
+ */
+export function supplyHops(state: GameState): Map<string, number> {
+  const hops = new Map<string, number>();
+  for (const h of state.hydrants) {
+    const line = h.state === 'flowing' ? state.hoses.find((l) => l.id === h.lineId) : undefined;
+    if (line) hops.set(line.truckId, 0);
+  }
+  const links = state.hoses.filter((l) => l.kind === 'supply' && l.toTruck);
+  for (let n = 0, grew = true; grew; n++) {
+    grew = false;
+    for (const l of links) {
+      for (const [from, to] of [[l.truckId, l.toTruck!], [l.toTruck!, l.truckId]]) {
+        if (hops.get(from) === n && !hops.has(to)) {
+          hops.set(to, n + 1);
+          grew = true;
+        }
+      }
+    }
+  }
+  return hops;
+}
+
+export function isSupplied(state: GameState, truck: Truck): boolean {
+  return suppliedTrucks(state).has(truck.id);
+}
+
 
 /** The supply line a firefighter is holding, if any. */
 export function heldSupply(state: GameState, u: Unit): HoseLine | undefined {
@@ -109,7 +146,7 @@ export function workHydrant(state: GameState, u: Unit, h: Hydrant, ap: number, l
     spent += 1;
     if (h.state === 'capped' && h.work >= HYDRANT_WORK.cap) {
       h.state = 'uncapped';
-      log(`${u.name} takes the cap off the hydrant.`);
+      log(`${u.name} takes the cap off the hydrant.`, 'info', u.truck);
     } else if (h.state === 'uncapped' && h.work >= HYDRANT_WORK.cap + HYDRANT_WORK.couple) {
       line!.tiles = extendLine(line!.tiles, [{ ...h.pos }]);
       line!.hydrant = { ...h.pos };
@@ -117,10 +154,10 @@ export function workHydrant(state: GameState, u: Unit, h: Hydrant, ap: number, l
       u.line = undefined;
       h.state = 'connected';
       h.lineId = line!.id;
-      log(`${u.name} couples the 5" supply line to the hydrant.`);
+      log(`${u.name} couples the 5" supply line to the hydrant.`, 'info', u.truck);
     } else if (h.state === 'connected' && h.work >= HYDRANT_TOTAL) {
       h.state = 'opening';
-      log(`${u.name} opens the hydrant. Water will reach the engine next turn.`, 'good');
+      log(`${u.name} opens the hydrant. Water will reach the engine next turn.`, 'good', u.truck);
     }
   }
   return spent;
@@ -142,19 +179,19 @@ export function continueHydrantWork(state: GameState, log: Log): void {
   }
 }
 
-/** Opened hydrants charge their supply line; flowing hydrants refill their engine. */
+/** Opened hydrants charge their supply line; hydrant water refills every supplied engine, relays included. */
 export const waterSystem: SimSystem = {
   name: 'water',
   step({ state, log }) {
     for (const h of state.hydrants) {
       const line = state.hoses.find((l) => l.id === h.lineId);
       const truck = line && state.trucks.find((t) => t.id === line.truckId);
-      if (!truck) continue;
-      if (h.state === 'opening') {
+      if (truck && h.state === 'opening') {
         h.state = 'flowing';
-        log(`Water from the hydrant reaches ${truck.name}.`, 'good');
+        log(`Water from the hydrant reaches ${truck.name}.`, 'good', truck.id);
       }
-      if (h.state === 'flowing') truck.water = Math.min(truck.maxWater, truck.water + HOSE.hydrantRefill);
     }
+    const supplied = suppliedTrucks(state);
+    for (const truck of state.trucks) if (supplied.has(truck.id)) truck.water = Math.min(truck.maxWater, truck.water + HOSE.hydrantRefill);
   },
 };

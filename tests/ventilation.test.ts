@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { performAction, sprayCost, sprayRange } from '../src/core/actions';
+import { performAction, sprayRange } from '../src/core/actions';
 import { buildState } from '../src/core/building';
 import { endTurn, newGame } from '../src/core/game';
 import { forEachTile, tileAt } from '../src/core/grid';
@@ -42,7 +42,7 @@ const fresh = (s: GameState) => {
 };
 
 describe('forcible entry', () => {
-  it('only ladder crews can force a locked door', () => {
+  it('any crew can force a locked door', () => {
     let s = standAt(standAt(house(), 'ff1', 0, 3), 'ff2', 1, 5);
     s.units[1].pos = P(0, 2);
     expect(performAction(s, { type: 'toggle', unitId: 'ff2', target: P(1, 3) }).error).toBeTruthy();
@@ -52,9 +52,22 @@ describe('forcible entry', () => {
     e.units[1].pos = P(0, 3);
     e.units[0].pos = P(0, 0);
     expect(performAction(e, { type: 'toggle', unitId: 'ff2', target: P(1, 3) }).error).toMatch(/Locked/);
-    expect(performAction(e, { type: 'force', unitId: 'ff2', target: P(1, 3) }).error).toMatch(/Only ladder crews/);
+    const forced = run(e, { type: 'force', unitId: 'ff2', target: P(1, 3) }); // engine crew
+    expect(tileAt(forced, P(1, 3))).toMatchObject({ locked: false, open: true });
     s = run(s, { type: 'force', unitId: 'ff1', target: P(1, 3) });
     expect(tileAt(s, P(1, 3))).toMatchObject({ locked: false, open: true });
+  });
+
+  it('only ladder crews can force a reinforced door, and it takes longer', () => {
+    let s = standAt(house(), 'ff2', 0, 3); // engine crew beside the door
+    Object.assign(tileAt(s, P(1, 3))!, { reinforced: true });
+    expect(performAction(s, { type: 'toggle', unitId: 'ff2', target: P(1, 3) }).error).toMatch(/reinforced/);
+    expect(performAction(s, { type: 'force', unitId: 'ff2', target: P(1, 3) }).error).toMatch(/only a ladder crew/);
+    s = standAt(standAt(s, 'ff2', 0, 0), 'ff1', 0, 3);
+    const ap = s.units[0].ap;
+    s = run(s, { type: 'force', unitId: 'ff1', target: P(1, 3) });
+    expect(s.units[0].ap).toBe(ap - 3);
+    expect(tileAt(s, P(1, 3))).toMatchObject({ locked: false, reinforced: false, open: true });
   });
 });
 
@@ -175,16 +188,19 @@ describe('smoke slows the crew', () => {
     expect(performAction(s, { type: 'pickup', unitId: 'ff1', target: P(6, 3) }).error).toMatch(/Nobody/);
   });
 
-  it('spraying from smoke costs more AP and reaches less far', () => {
-    const s = house();
+  it('spraying costs 1 AP whatever the smoke, but thick smoke cuts the reach', () => {
+    let s = standAt(house(), 'ff2', 3, 2);
+    s.hoses.push({ id: 'l1', truckId: 'truck2', kind: 'attack', size: '1.75', side: 0, origin: P(0, 0), tiles: [P(3, 2)], holder: 'ff2' });
+    s.units[1].line = 'l1';
+    s.trucks[1].status = 'placed';
     const at = P(3, 2);
-    const set = (v: number) => (tileAt(s, at)!.smoke = v);
-    set(0);
-    expect([sprayCost(s, at), sprayRange(s, at)]).toEqual([1, 3]);
-    set(40);
-    expect([sprayCost(s, at), sprayRange(s, at)]).toEqual([2, 3]);
-    set(70);
-    expect([sprayCost(s, at), sprayRange(s, at)]).toEqual([3, 2]);
+    const spray = { type: 'spray', unitId: 'ff2', target: P(4, 2) } as const;
+    for (const [smoke, range] of [[0, 3], [40, 3], [70, 2]]) {
+      tileAt(s, at)!.smoke = smoke;
+      expect(sprayRange(s, at)).toBe(range);
+      const ap = s.units[1].ap;
+      expect(run(s, spray).units[1].ap).toBe(ap - 1);
+    }
   });
 });
 

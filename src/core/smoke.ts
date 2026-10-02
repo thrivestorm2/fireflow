@@ -1,11 +1,29 @@
 import { AMBIENT } from './materials';
-import { DIRS, isOpenAir, isOutside, isShaft, posKey } from './grid';
-import { clamp } from './fire';
+import { DIRS, forEachClosedDoor, isOpenAir, isOutside, isShaft, posKey, spaceMap } from './grid';
+import { clamp, ventedTiles } from './fire';
 import type { Tile } from './types';
 import type { SimSystem } from './systems';
 
 export const SMOKE = {
-  perFireLevel: 20,
+  perFireLevel: 60,
+  /** A fire starved of air burns dirty: more smoke per level. */
+  ventLimitedFactor: 1.5,
+  /** Hot fuel that isn't burning yet still gives off smoke (pyrolysis). */
+  pyrolysisTemp: 250,
+  pyrolysis: 10,
+  /** Share of the smoke difference across a closed door that leaks around it each turn. */
+  doorLeak: 0.25,
+  /** Smoke spreads across a room's ceiling in seconds: each turn every tile moves this far toward its room's average. */
+  roomMix: 0.6,
+  /**
+   * Smoke rising through a stairwell into the space above, per turn, as a share of the
+   * lower space's smoke. Buoyant smoke keeps rising until the upper space holds
+   * `stairBias` times the concentration below: upstairs fills first.
+   */
+  stairMix: 0.5,
+  stairBias: 2,
+  /** Smoke flowing out through an open doorway into the next room, per turn, as a share of the difference. */
+  doorwayMix: 0.3,
   diffusion: 0.2,
   rise: 0.35,
   /** Smoke escapes faster through a roof vent (vertical ventilation). */
@@ -16,7 +34,8 @@ export const SMOKE = {
   roofVentHeatDraw: 0.1,
   /** At most this share of smoke is left in a space with several vents. */
   minVentKept: 0.4,
-  decay: 0.95,
+  /** Share kept each turn indoors: a closed-up house holds its smoke. */
+  decay: 0.99,
 } as const;
 
 /** Smoke is produced by fire, spreads through open space, rises up shafts and vents outside. */
@@ -26,13 +45,15 @@ export const smokeSystem: SimSystem = {
     const { floors, width: W, height: H } = state;
     const F = floors.length;
     const d = floors.map(() => Array.from({ length: H }, () => new Array<number>(W).fill(0)));
+    const map = spaceMap(floors);
+    const vented = ventedTiles(floors, map);
 
     for (let f = 0; f < F; f++) {
       for (let y = 0; y < H; y++) {
         for (let x = 0; x < W; x++) {
           const t = floors[f][y][x];
           if (t.fire > 0) {
-            const made = t.fire * SMOKE.perFireLevel;
+            const made = t.fire * SMOKE.perFireLevel * (vented[f][y][x] ? 1 : SMOKE.ventLimitedFactor);
             if (isOpenAir(t)) {
               d[f][y][x] += made;
             } else {
@@ -43,6 +64,8 @@ export const smokeSystem: SimSystem = {
               });
               for (const [dx, dy] of outlets) d[f][y + dy][x + dx] += made / outlets.length;
             }
+          } else if (t.fuel > 0 && t.temperature >= SMOKE.pyrolysisTemp && isOpenAir(t)) {
+            d[f][y][x] += SMOKE.pyrolysis;
           }
           if (!isOpenAir(t)) continue;
           for (const [dx, dy] of [[1, 0], [0, 1]] as const) {
@@ -63,6 +86,37 @@ export const smokeSystem: SimSystem = {
         }
       }
     }
+
+    forEachClosedDoor(floors, (f, [ax, ay], [bx, by]) => {
+      const flow = (floors[f][ay][ax].smoke - floors[f][by][bx].smoke) * SMOKE.doorLeak;
+      d[f][ay][ax] -= flow;
+      d[f][by][bx] += flow;
+    });
+
+    // Mix within each room before capping, so smoke made at the fire fills the room instead of being lost.
+    const level = (i: number) => {
+      const { floor: f, tiles } = map.spaces[i];
+      return tiles.reduce((n, [x, y]) => n + floors[f][y][x].smoke + d[f][y][x], 0) / tiles.length;
+    };
+    map.spaces.forEach(({ floor: f, tiles }, i) => {
+      const avg = level(i);
+      for (const [x, y] of tiles) d[f][y][x] += (avg - floors[f][y][x].smoke - d[f][y][x]) * SMOKE.roomMix;
+    });
+    // ...then out through open doorways and up the stairs.
+    const move = (from: number, to: number, push: number) => {
+      if (push <= 0) return;
+      const a = map.spaces[from];
+      const b = map.spaces[to];
+      const amount = push * Math.min(a.tiles.length, b.tiles.length);
+      for (const [x, y] of a.tiles) d[a.floor][y][x] -= amount / a.tiles.length;
+      for (const [x, y] of b.tiles) d[b.floor][y][x] += amount / b.tiles.length;
+    };
+    const levels = map.spaces.map((_, i) => level(i));
+    for (const [a, b] of map.doorways) {
+      move(a, b, SMOKE.doorwayMix * (levels[a] - levels[b]));
+      move(b, a, SMOKE.doorwayMix * (levels[b] - levels[a]));
+    }
+    for (const [lo, hi] of map.shafts) move(lo, hi, SMOKE.stairMix * (levels[lo] - levels[hi] / SMOKE.stairBias));
 
     for (let f = 0; f < F; f++) {
       for (let y = 0; y < H; y++) {

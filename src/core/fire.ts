@@ -1,12 +1,19 @@
-import { DIRS, isOpenAir, isOutside, isShaft } from './grid';
+import { DIRS, forEachClosedDoor, isOpenAir, isOutside, isShaft, spaceMap, type SpaceMap } from './grid';
 import { AMBIENT, ignitionOf } from './materials';
 import type { SimSystem } from './systems';
 import type { Tile } from './types';
 
-/** Tuning constants for fire behaviour. Temperatures are in °C. */
+/**
+ * Tuning constants for fire behaviour. Temperatures are in °C; a turn is about
+ * a minute. Tuned against compartment-fire research on modern furnishings: the
+ * room of origin fills with smoke in a minute or two, flashover follows a few
+ * minutes after ignition once the hot gas reaches ~550 °C (if the fire can get
+ * air), fully developed rooms burn at 900–1000 °C, and smoke works its way
+ * through the house, around closed doors and up the stairs, within minutes.
+ */
 export const FIRE = {
   /** Temperature a burning tile holds itself at, by intensity. */
-  flameTemp: [AMBIENT, 400, 600, 800],
+  flameTemp: [AMBIENT, 500, 750, 950],
   /** Radiant heat pushed into each side neighbour per intensity level. */
   emitSide: 96,
   /** Heat pushed upward per level: through an opening (stairs, hole) or through the ceiling. */
@@ -14,8 +21,21 @@ export const FIRE = {
   emitUpCeiling: 24,
   emitDown: 16,
   /** Hot-gas mixing rate between adjacent open tiles, and the extra rise through openings. */
-  convection: 0.12,
+  convection: 0.2,
   rise: 0.15,
+  /** Share of the temperature difference across a closed door that leaks around it each turn. */
+  doorLeak: 0.04,
+  /** The hot gas layer spreads across a room: each turn every tile moves this far toward its room's average. */
+  roomMix: 0.3,
+  /** Hot gas rising through a stairwell into the space above, per turn, as a share of the temperature difference. */
+  stairMix: 0.15,
+  /** Hot gas flowing out through an open doorway into the next room, per turn, as a share of the difference. */
+  doorwayMix: 0.15,
+  /** A room whose air averages this hot flashes over: everything that can burn in it ignites. Needs air. */
+  flashoverTemp: 550,
+  flashoverIntensity: 2,
+  /** Without any opening to the outside a fire runs short of air and can't grow past this. */
+  ventLimitedMax: 2,
   /** Multiplier on heat gained by wet tiles. */
   wetHeatFactor: 0.4,
   /** Fraction of excess heat (above ambient) kept each turn. */
@@ -32,14 +52,39 @@ export const FIRE = {
   windowBreakTemp: 450,
 } as const;
 
-/** Fresh air reaches the tile: an opening beside it, or a vent/hole right above it. */
+/** Fresh air reaches the tile: an opening beside it (an open window, or an open door to the outside), or a vent/hole right above it. */
 function hasVent(floors: Tile[][][], f: number, x: number, y: number): boolean {
   const above = floors[f + 1]?.[y][x];
   if (above && (above.kind === 'vent' || above.kind === 'hole')) return true;
   return DIRS.some(([dx, dy]) => {
     const n = floors[f][y + dy]?.[x + dx];
-    return !!n && (isOutside(n) || n.kind === 'hole' || (n.kind === 'window' && n.open));
+    if (!n) return false;
+    if (n.kind === 'door' && n.open) return DIRS.some(([ex, ey]) => {
+      const o = floors[f][y + dy + ey]?.[x + dx + ex];
+      return !!o && isOutside(o);
+    });
+    return isOutside(n) || n.kind === 'hole' || (n.kind === 'window' && n.open);
   });
+}
+
+/** Tiles a fire can draw air to: any tile in a space with an opening to the outside, or with its own opening. */
+export function ventedTiles(floors: Tile[][][], map: SpaceMap): boolean[][][] {
+  const vented = floors.map((rows, f) => rows.map((row, y) => row.map((_, x) => hasVent(floors, f, x, y))));
+  // Air reaches a room through open doorways and stairs from any room that has an opening.
+  const open = map.spaces.map(({ floor: f, tiles }) => tiles.some(([x, y]) => vented[f][y][x]));
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const [a, b] of [...map.doorways, ...map.shafts]) {
+      if (open[a] !== open[b]) {
+        open[a] = open[b] = true;
+        grew = true;
+      }
+    }
+  }
+  map.spaces.forEach(({ floor: f, tiles }, i) => {
+    if (open[i]) for (const [x, y] of tiles) vented[f][y][x] = true;
+  });
+  return vented;
 }
 
 /**
@@ -96,6 +141,37 @@ export const fireSystem: SimSystem = {
         }
       }
     }
+    forEachClosedDoor(floors, (f, [ax, ay], [bx, by]) => {
+      const flow = (floors[f][ay][ax].temperature - floors[f][by][bx].temperature) * FIRE.doorLeak;
+      dHeat[f][ay][ax] -= flow;
+      dHeat[f][by][bx] += flow;
+    });
+
+    const map = spaceMap(floors);
+    const vented = ventedTiles(floors, map);
+    const avgTemp = (i: number) => {
+      const { floor: f, tiles } = map.spaces[i];
+      return tiles.reduce((n, [x, y]) => n + floors[f][y][x].temperature, 0) / tiles.length;
+    };
+    map.spaces.forEach(({ floor: f, tiles }, i) => {
+      const avg = avgTemp(i);
+      for (const [x, y] of tiles) dHeat[f][y][x] += (avg - floors[f][y][x].temperature) * FIRE.roomMix;
+    });
+    // Hot gas flows out through open doorways, and rises up the stairs (never down them).
+    const exchange = (from: number, to: number, rate: number) => {
+      const diff = avgTemp(from) - avgTemp(to);
+      if (diff <= 0) return;
+      const a = map.spaces[from];
+      const b = map.spaces[to];
+      const amount = rate * diff * Math.min(a.tiles.length, b.tiles.length);
+      for (const [x, y] of a.tiles) dHeat[a.floor][y][x] -= amount / a.tiles.length;
+      for (const [x, y] of b.tiles) dHeat[b.floor][y][x] += amount / b.tiles.length;
+    };
+    for (const [a, b] of map.doorways) {
+      exchange(a, b, FIRE.doorwayMix);
+      exchange(b, a, FIRE.doorwayMix);
+    }
+    for (const [lo, hi] of map.shafts) exchange(lo, hi, FIRE.stairMix);
 
     // 3. Apply heat, then ignite / grow / burn.
     for (let f = 0; f < F; f++) {
@@ -128,12 +204,29 @@ export const fireSystem: SimSystem = {
             if (t.contents !== 'hydrant') t.contents = 'none';
           } else if (t.fire > 1 && t.fuel < t.fire * 1.5) {
             t.fire -= 1; // running out of fuel
-          } else if (t.fire < 3 && t.wet === 0) {
+          } else if (!vented[f][y][x] && t.fire > FIRE.ventLimitedMax) {
+            t.fire -= 1; // starved of air
+          } else if (t.fire < (vented[f][y][x] ? 3 : FIRE.ventLimitedMax) && t.wet === 0) {
             const vent = hasVent(floors, f, x, y) ? FIRE.ventGrowBonus : 1;
             if (rng.chance(FIRE.growChance * vent)) t.fire += 1;
           }
         }
       }
+    }
+
+    // Flashover: a burning room hot enough, with air to feed it, goes up all at once.
+    for (const { floor: f, tiles: space } of map.spaces) {
+      const tiles = space.map(([x, y]) => floors[f][y][x]);
+      if (!tiles.some((t) => t.fire > 0) || !vented[f][space[0][1]][space[0][0]]) continue;
+      if (tiles.reduce((n, t) => n + t.temperature, 0) / tiles.length < FIRE.flashoverTemp) continue;
+      let lit = 0;
+      for (const t of tiles) {
+        if (t.fire === 0 && t.fuel > 0 && t.wet === 0) {
+          t.fire = FIRE.flashoverIntensity;
+          lit++;
+        }
+      }
+      if (lit >= 2) log(`Flashover on ${floorName(f)}! The whole room is burning.`, 'bad');
     }
 
     // 4. Cooling and drying.

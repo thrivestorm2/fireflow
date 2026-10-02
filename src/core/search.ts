@@ -1,5 +1,5 @@
 import { DIRS, isOpenAir, isOutside, posKey, samePos, tileAt } from './grid';
-import type { GameState, LogEntry, Pos, Unit } from './types';
+import type { GameState, Log, Pos, Unit } from './types';
 
 export const SEARCH = {
   /** How far a firefighter can see through clear air. */
@@ -12,16 +12,14 @@ export const SEARCH = {
   thickExtra: 1,
 } as const;
 
-type Log = (text: string, tone?: LogEntry['tone']) => void;
-
-function reveal(state: GameState, p: Pos, log: Log): void {
+function reveal(state: GameState, p: Pos, log: Log, truckId?: string): void {
   const t = tileAt(state, p);
   if (!t) return;
   if (!isOutside(t)) t.searched = true;
   for (const c of state.units) {
     if (c.kind === 'civilian' && c.status === 'active' && !c.found && !c.carriedBy && samePos(c.pos, p)) {
       c.found = true;
-      log(`Victim found: ${c.name}!`, 'good');
+      log(`Victim found: ${c.name}!`, 'good', truckId);
     }
   }
 }
@@ -55,14 +53,14 @@ export function visibleFrom(state: GameState, u: Unit): Pos[] {
 export function spotVictims(state: GameState, log: Log): void {
   for (const u of state.units) {
     if (u.kind !== 'firefighter' || u.status !== 'active' || u.aboard) continue;
-    for (const p of visibleFrom(state, u)) reveal(state, p, log);
+    for (const p of visibleFrom(state, u)) reveal(state, p, log, u.truck);
   }
 }
 
 /** A hands-on search of the firefighter's tile and the eight around it, whatever the smoke. */
 export function searchAround(state: GameState, u: Unit, log: Log): void {
   for (let dy = -1; dy <= 1; dy++) {
-    for (let dx = -1; dx <= 1; dx++) reveal(state, { ...u.pos, x: u.pos.x + dx, y: u.pos.y + dy }, log);
+    for (let dx = -1; dx <= 1; dx++) reveal(state, { ...u.pos, x: u.pos.x + dx, y: u.pos.y + dy }, log, u.truck);
   }
 }
 

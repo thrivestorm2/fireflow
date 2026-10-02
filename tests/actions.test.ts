@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { performAction, type Action } from '../src/core/actions';
+import { performAction, streamArea, type Action } from '../src/core/actions';
 import { buildState } from '../src/core/building';
 import { endTurn } from '../src/core/game';
 import { forEachTile, tileAt } from '../src/core/grid';
-import { hoseLeft } from '../src/core/hoses';
+import { hoseLeft, isSupplied } from '../src/core/hoses';
 import { pathTo } from '../src/core/pathing';
 import { seatOf, seatTiles } from '../src/core/trucks';
 import type { GameState, Pos } from '../src/core/types';
@@ -90,7 +90,7 @@ describe('trucks', () => {
     const s = parked();
     expect(s.trucks[0].water).toBe(20);
     expect(hoseLeft(s, s.trucks[0])).toBe(28);
-    expect(s.trucks[1].water).toBe(0);
+    expect(s.trucks[1].water).toBe(4); // the ladder truck's small tank
   });
 
   it('the engineer drives, the lieutenant rides front right, and the front can face either end', () => {
@@ -273,12 +273,14 @@ describe('hydrants', () => {
   it('the 5″ supply line comes off the coupling at the back of the engine', () => {
     let s = run(staged(), place('truck1', 0)); // facing left: the rear is at x 4
     s = standAt(s, 'ff1', 2, 2);
-    expect(performAction(s, { type: 'takeLine', unitId: 'ff1', kind: 'supply' }).error).toMatch(/back of an engine/);
+    expect(performAction(s, { type: 'takeLine', unitId: 'ff1', kind: 'supply' }).error).toMatch(/back of an engine or ladder truck/);
     s = standAt(s, 'ff1', 5, 0);
     s = run(s, { type: 'takeLine', unitId: 'ff1', kind: 'supply' });
     expect(s.hoses[0]).toMatchObject({ size: '5', origin: P(4, 0) });
     s = standAt(s, 'ff2', 5, 1);
-    expect(performAction(s, { type: 'takeLine', unitId: 'ff2', kind: 'supply' }).error).toMatch(/already in use/);
+    s = run(s, { type: 'takeLine', unitId: 'ff2', kind: 'supply' }); // a second line: hydrant and relay
+    s = standAt(s, 'ff3', 4, 2);
+    expect(performAction(s, { type: 'takeLine', unitId: 'ff3', kind: 'supply' }).error).toMatch(/already in use/);
   });
 
   it('without a supply line only the cap comes off', () => {
@@ -399,5 +401,123 @@ describe('player actions', () => {
       expect(burning(s)).toBeLessThanOrEqual(prev);
     }
     expect(burning(s)).toBeLessThan(before);
+  });
+});
+
+describe('truck-to-truck supply and the aerial', () => {
+  // parked(): engine at x 0–4 (rear coupling x 4, side inlets x 3); ladder truck at x 5–11 facing left
+  // (side inlets x 8, turntable deck x 10, rear coupling x 11). Ladder crew is ff3.
+  const tip = P(6, 2, 1); // open air just outside the upper floor's window at (6, 3)
+
+  /** Engine supply line run from its rear to the ladder truck's inlet, and a second one on a flowing hydrant. */
+  function relay(): GameState {
+    let s = standAt(parked(), 'ff2', 4, 2);
+    s = run(s, { type: 'takeLine', unitId: 'ff2', kind: 'supply' }, move('ff2', P(5, 2), P(6, 2), P(7, 2)));
+    s = run(fresh(s), move('ff2', P(8, 2)), { type: 'inlet', unitId: 'ff2', truckId: 'truck2' });
+    expect(s.hoses[0]).toMatchObject({ toTruck: 'truck2', holder: undefined });
+    expect(s.hoses[0].tiles.at(-1)).toEqual(P(8, 1));
+    s = standAt(s, 'ff1', 4, 2);
+    s = run(s, { type: 'takeLine', unitId: 'ff1', kind: 'supply' });
+    const line = s.hoses[1];
+    Object.assign(s.hydrants[0], { state: 'flowing', lineId: line.id, work: 5 });
+    Object.assign(line, { hydrant: P(1, 2), holder: undefined });
+    s.units[0].line = undefined;
+    return s;
+  }
+
+  it('a supply line can couple to another truck’s side inlet, relaying hydrant water', () => {
+    let s = parked();
+    expect(isSupplied(s, s.trucks[1])).toBe(false);
+    s = relay();
+    expect(isSupplied(s, s.trucks[0])).toBe(true);
+    expect(isSupplied(s, s.trucks[1])).toBe(true);
+    s.trucks[0].water = 0;
+    s = endTurn(s);
+    expect(s.trucks[0].water).toBe(8);
+  });
+
+  it('an engine can’t couple its own supply line to its own inlet', () => {
+    let s = standAt(parked(), 'ff2', 4, 2);
+    s = run(s, { type: 'takeLine', unitId: 'ff2', kind: 'supply' }, move('ff2', P(3, 2)));
+    expect(performAction(s, { type: 'inlet', unitId: 'ff2', truckId: 'truck1' }).error).toMatch(/itself/);
+  });
+
+  it('anyone on the turntable can raise the aerial; it is a route up to a window', () => {
+    let s = standAt(parked(), 'ff3', 10, 2);
+    expect(performAction(s, { type: 'aerial', unitId: 'ff3', tip }).error).toMatch(/turntable/);
+    s = run(s, move('ff3', P(10, 1)));
+    expect(performAction(s, { type: 'aerial', unitId: 'ff3', tip: P(6, 4, 1) }).error).toMatch(/open air or on the roof/);
+    expect(performAction(s, { type: 'aerial', unitId: 'ff3', tip: P(1, 2, 1) }).error).toMatch(/Out of reach/);
+    s = run(s, { type: 'aerial', unitId: 'ff3', tip });
+    expect(s.trucks[1].aerialTip).toEqual(tip);
+    s = fresh(s);
+    expect(pathTo(s, s.units[2], tip)).toEqual([tip]);
+    s = run(s, move('ff3', tip), { type: 'toggle', unitId: 'ff3', target: P(6, 3, 1) }, move('ff3', P(6, 3, 1)));
+    expect(s.units[2].pos).toEqual(P(6, 3, 1));
+  });
+
+  it('a raised aerial doesn’t get in anyone else’s way', () => {
+    let s = run(standAt(parked(), 'ff3', 10, 1), { type: 'aerial', unitId: 'ff3', tip });
+    s = standAt(s, 'ff1', 3, 2);
+    s = endTurn(s);
+    expect(pathTo(s, s.units[0], P(6, 2))).toEqual([P(4, 2), P(5, 2), P(6, 2)]);
+    s = run(s, move('ff1', P(4, 2), P(5, 2), P(6, 2)), move('ff3', tip));
+    expect(s.units[0].pos).toEqual(P(6, 2));
+    expect(s.units[2].pos).toEqual(tip);
+  });
+
+  it('whoever is at the tip rides along when it swings', () => {
+    let s = run(standAt(parked(), 'ff3', 10, 1), { type: 'aerial', unitId: 'ff3', tip });
+    s = run(fresh(s), move('ff3', tip), { type: 'aerial', unitId: 'ff3', tip: P(7, 2, 1) });
+    expect(s.units[2].pos).toEqual(P(7, 2, 1));
+  });
+
+  it('the master stream costs 1 AP, floods an area, and drains the small tank unless supplied', () => {
+    const setup = (s: GameState) => {
+      s = run(standAt(s, 'ff3', 10, 1), { type: 'aerial', unitId: 'ff3', tip });
+      tileAt(s, P(6, 3, 1))!.open = true;
+      for (const p of [P(6, 4, 1), P(5, 5, 1), P(6, 5, 1)]) tileAt(s, p)!.fire = 3;
+      return fresh(s);
+    };
+    const stream = { type: 'masterStream', unitId: 'ff3', target: P(6, 4, 1) } as const;
+    let s = setup(parked());
+    expect(performAction(s, { ...stream, target: P(6, 5, 1) }).error).toBeUndefined();
+    const ap = s.units[2].ap;
+    s = run(s, stream);
+    expect(s.units[2].ap).toBe(ap - 1);
+    // The whole area around the target is knocked down, not just the target tile.
+    for (const p of [P(6, 4, 1), P(5, 5, 1), P(6, 5, 1)]) expect(tileAt(s, p)!.fire).toBe(0);
+    // ...but not through the wall beside the window.
+    expect(streamArea(s, P(6, 4, 1)).some((p) => p.y === 3 && p.x !== 6)).toBe(false);
+    expect(s.trucks[1].water).toBe(1);
+    expect(performAction(fresh(s), stream).error).toMatch(/tank is dry/);
+
+    s = setup(relay());
+    s = run(s, stream, { ...stream, target: P(6, 5, 1) });
+    expect(s.trucks[1].water).toBe(4);
+  });
+});
+
+describe('master stream area', () => {
+  /** A room split by a wall with a doorway; the door is open or closed. */
+  const rooms = (door: 'D' | 'd') => buildState(miniScenario([['#######', '#,,w,,#', `#,,${door},,#`, '#,,w,,#', '#######']]));
+  const hit = (s: GameState) => new Set(streamArea(s, P(2, 2)).map((p) => `${p.x},${p.y}`));
+
+  it('walls and closed doors stop the water', () => {
+    const area = hit(rooms('D'));
+    expect([...area].sort()).toEqual(['1,1', '1,2', '1,3', '2,1', '2,2', '2,3'].sort());
+  });
+
+  it('an open door lets it through', () => {
+    const area = hit(rooms('d'));
+    expect(area.has('3,2')).toBe(true);
+    expect(area.has('3,1')).toBe(false); // the wall beside the door still blocks
+  });
+
+  it('a broken window lets it through', () => {
+    const s = buildState(miniScenario([['#######', '#,,W,,#', '#######']]));
+    expect(streamArea(s, P(2, 1)).some((p) => p.x === 3)).toBe(false);
+    Object.assign(tileAt(s, P(3, 1))!, { open: true, broken: true });
+    expect(streamArea(s, P(2, 1)).some((p) => p.x === 3)).toBe(true);
   });
 });

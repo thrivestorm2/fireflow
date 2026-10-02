@@ -19,7 +19,7 @@ function runEnvironment(state: GameState, systems: SimSystem[] = SYSTEMS): void 
   const ctx: SimContext = {
     state,
     rng,
-    log: (text: string, tone: LogEntry['tone'] = 'info') => state.log.push({ turn: state.turn, text, tone }),
+    log: (text: string, tone: LogEntry['tone'] = 'info', truckId?: string) => state.log.push({ turn: state.turn, text, tone, truckId }),
   };
   for (const s of systems) s.step(ctx);
   state.rngState = rng.state;
@@ -30,7 +30,7 @@ function arriveTrucks(state: GameState): void {
   for (const t of state.trucks) {
     if (t.status === 'enroute' && t.arrivalTurn <= state.turn) {
       t.status = 'staged';
-      state.log.push({ turn: state.turn, text: `${t.name} is on scene — choose where to park it.`, tone: 'good' });
+      state.log.push({ turn: state.turn, text: `${t.name} at scene requesting assignment.`, tone: 'good', truckId: t.id });
     }
   }
 }
@@ -54,7 +54,7 @@ export function endTurn(prev: GameState, systems: SimSystem[] = SYSTEMS): GameSt
   state.turn += 1;
   runEnvironment(state, systems);
   arriveTrucks(state);
-  const log = (text: string, tone: LogEntry['tone'] = 'info') => state.log.push({ turn: state.turn, text, tone });
+  const log = (text: string, tone: LogEntry['tone'] = 'info', truckId?: string) => state.log.push({ turn: state.turn, text, tone, truckId });
   for (const u of state.units) if (u.status === 'active') u.ap = u.maxAp;
   continueHydrantWork(state, log);
   spotVictims(state, log);
