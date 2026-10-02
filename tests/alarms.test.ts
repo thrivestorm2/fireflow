@@ -18,7 +18,8 @@ describe('alarms', () => {
       ['Engine 6', 'engine', 'enroute'],
       ['Ladder 8', 'ladder', 'enroute'],
     ]);
-    expect(added.map((t) => t.arrivalTurn)).toEqual([s.turn + ALARM.delay, s.turn + ALARM.delay + 1, s.turn + ALARM.delay + 2]);
+    const first = Math.max(s.turn + ALARM.delay, ...s.trucks.slice(0, before).map((t) => t.arrivalTurn + 1));
+    expect(added.map((t) => t.arrivalTurn)).toEqual([first, first + 1, first + 2]);
     // Each truck comes with its crew: LT, ENG, then FF.
     const crew = s.units.filter((u) => u.truck === added[0].id);
     expect(crew.map((u) => u.rank)).toEqual(['LT', 'ENG', 'FF']);
@@ -28,8 +29,13 @@ describe('alarms', () => {
 
   it('later alarms come from further away, and they stop at the highest alarm', () => {
     let s = run(newGame(houseFire), { type: 'alarm' });
+    const second = s.trucks.slice(-3).map((t) => t.arrivalTurn);
     s = run(s, { type: 'alarm' });
-    expect(s.trucks.filter((t) => t.status === 'enroute').at(-3)!.arrivalTurn).toBe(s.turn + ALARM.delay + 1);
+    const third = s.trucks.slice(-3).map((t) => t.arrivalTurn);
+    expect(third[0]).toBe(Math.max(s.turn + ALARM.delay + ALARM.perLevel, Math.max(...second) + 1));
+    expect(Math.min(...third)).toBeGreaterThan(Math.max(...second)); // each alarm takes longer than the last
+    s = run(s, { type: 'alarm' });
+    expect(Math.min(...s.trucks.slice(-3).map((t) => t.arrivalTurn))).toBeGreaterThan(Math.max(...third));
     while (s.alarm < ALARM.maxLevel) s = run(s, { type: 'alarm' });
     expect(performAction(s, { type: 'alarm' }).error).toMatch(/5th alarm/);
   });

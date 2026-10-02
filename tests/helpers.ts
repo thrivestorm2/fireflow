@@ -1,4 +1,6 @@
 import { performAction, type Action } from '../src/core/actions';
+import { DIRS, isWalkable, posKey, tileAt } from '../src/core/grid';
+import { dischargeTiles, truckOccupancy } from '../src/core/trucks';
 import type { FloorPlan, Scenario } from '../src/core/building';
 import type { GameState } from '../src/core/types';
 
@@ -33,4 +35,19 @@ export function standAt(s: GameState, id: string, x: number, y: number, floor = 
   u.aboard = undefined;
   u.pos = { floor, x, y };
   return s;
+}
+
+/** Puts a firefighter on an engine's pump: on a free tile next to its pump panel. */
+export function onPump(s: GameState, id: string, truckId = 'truck1'): GameState {
+  const truck = s.trucks.find((t) => t.id === truckId)!;
+  const trucks = truckOccupancy(s);
+  for (const d of dischargeTiles(truck)) {
+    for (const [dx, dy] of DIRS) {
+      const p = { floor: 0, x: d.pos.x + dx, y: d.pos.y + dy };
+      const t = tileAt(s, p);
+      const taken = s.units.some((u) => u.id !== id && !u.aboard && posKey(u.pos) === posKey(p));
+      if (t && isWalkable(t) && !trucks.has(posKey(p)) && !taken) return standAt(s, id, p.x, p.y);
+    }
+  }
+  throw new Error(`No room at ${truck.name}'s pump panel`);
 }

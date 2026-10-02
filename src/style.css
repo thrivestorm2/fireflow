@@ -184,21 +184,22 @@ button.primary:hover:not(:disabled) { background: #c4461a; }
 .truck { padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2); }
 .truck + .truck { margin-top: 2px; }
 .truck-head { display: flex; align-items: center; gap: 8px; }
-.truck-head .tname { font-weight: 600; }
+.truck-head .tname { font-weight: 600; white-space: nowrap; }
 .truck-head .tstatus { color: var(--muted); font-size: 12px; margin-left: auto; text-align: right; }
 .truck-head button { padding: 3px 10px; }
-.truck.enroute { opacity: 0.6; }
+.truck.enroute .tname, .truck.enroute .tstatus { opacity: 0.75; }
 .alarm-row { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
 button.alarm { background: #8e1b1b; border-color: #c62828; color: #fff; font-weight: 700; }
 button.alarm:hover:not(:disabled) { background: #a82222; }
 .truck.staged { cursor: pointer; }
 .truck.staged:hover { border-color: #f5c518; }
 .truck.staged.placing { border-color: #f5c518; box-shadow: 0 0 0 1px #f5c518 inset; }
-.at-scene { background: #f5c518; color: #1a1a1a; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 6px; border-radius: 3px; }
+.status-badge { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 6px; border-radius: 3px; white-space: nowrap; }
+.status-badge.enroute { background: #9ccc65; color: #1a1a1a; }
+.status-badge.staged { background: #f5c518; color: #1a1a1a; }
+.status-badge.placed { background: #42a5f5; color: #0d1b2a; }
 .truck .crewlist { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
 .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; border: 1px solid #000; }
-.dot.engine { background: #f5c518; }
-.dot.ladder { background: #ff8a3d; }
 .dot.officer { background: #d32f2f; }
 .dot.crew { background: #f5c518; }
 

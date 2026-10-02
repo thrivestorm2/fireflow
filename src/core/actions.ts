@@ -1,5 +1,5 @@
 import { ALARM, nextAlarm, ordinal, strikeAlarm } from './alarms';
-import { floorName } from './fire';
+import { ACCELERANT, floorName } from './fire';
 import { evaluate } from './game';
 import { DIRS, isAdjacent, isOpenAir, isOutside, isWalkable, neighbors, posKey, samePos, tileAt } from './grid';
 import { extendLine, HOSE, HOSE_SIZES, hoseLeft, hydrantAt, hydrantWorkAvailable, HYDRANT_TOTAL, isSupplied, linesThrough, workHydrant } from './hoses';
@@ -15,6 +15,7 @@ import {
   dischargeTiles,
   inletTiles,
   placementError,
+  pumpOperator,
   supplyTiles,
   truckOccupancy,
   truckTiles,
@@ -127,7 +128,7 @@ export function stepCost(state: GameState, from: Pos, to: Pos, carrying: boolean
   const turntable = !!turntableAt(state, to);
   if (block.trucks.has(posKey(to)) && !turntable) return 'A truck is parked there';
   const other = block.units.get(posKey(to));
-  if (other && other.kind === 'civilian') return 'Someone is lying there — pick them up';
+  if (other && other.kind === 'civilian') return other.occupant === 'bystander' ? 'A bystander is in the way' : 'Someone is there — pick them up';
   if (!turntable && !aerialTipAt(state, to) && !isWalkable(t)) {
     if (t.kind === 'door' || t.kind === 'window') return `The ${t.kind} is closed`;
     if (CONTENTS[t.contents].blocks) return `${CONTENTS[t.contents].label} in the way`;
@@ -223,7 +224,7 @@ export function lineOf(state: GameState, u: Unit): HoseLine | undefined {
 }
 
 function civilianAt(state: GameState, p: Pos): Unit | undefined {
-  return state.units.find((u) => u.kind === 'civilian' && u.status === 'active' && u.found && !u.carriedBy && samePos(u.pos, p));
+  return state.units.find((u) => u.kind === 'civilian' && u.occupant !== 'bystander' && u.status === 'active' && u.found && !u.carriedBy && samePos(u.pos, p));
 }
 
 export function fanAt(state: GameState, p: Pos) {
@@ -336,6 +337,7 @@ export function actionCost(state: GameState, action: Action): number | string {
       if (!line || line.kind !== 'attack') return 'Needs an attack line — take one from an engine';
       const truck = state.trucks.find((t) => t.id === line.truckId)!;
       if (truck.water < HOSE_SIZES[line.size].water) return `${truck.name} is out of water — supply it from a hydrant`;
+      if (!pumpOperator(state, truck)) return `Nobody is on ${truck.name}'s pump — someone has to stand at the pump panel, midship`;
       cost = canSprayFrom(state, u.pos, action.target, nozzleRange(state, u)) ?? COST.spray;
       break;
     }
@@ -504,7 +506,7 @@ export function performAction(prev: GameState, action: Action): ActionResult {
     const trucks = strikeAlarm(state);
     const names = trucks.map((t) => t.name);
     const list = names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0];
-    log(`${ordinal(state.alarm)} alarm struck: ${list} responding, due turns ${Math.min(...turns)}–${Math.max(...turns)}.`, 'good');
+    log(`${ordinal(state.alarm)} alarm struck: ${list} responding, due in ${Math.min(...turns) - state.turn}–${Math.max(...turns) - state.turn} turns.`, 'good');
     return { state };
   }
 
@@ -549,6 +551,7 @@ export function performAction(prev: GameState, action: Action): ActionResult {
       if (carried) carried.pos = { ...to };
       if (carried && isOutside(tileAt(state, to)!) && to.floor === 0) {
         carried.status = 'rescued';
+        carried.unconscious = false; // into the paramedics' care
         carried.carriedBy = undefined;
         u.carrying = undefined;
         log(`${u.name} carries ${carried.name} to safety!`, 'good');
@@ -740,7 +743,9 @@ export function streamArea(state: GameState, target: Pos): Pos[] {
 function applyWater(state: GameState, target: Pos, w: { knockdown: number; cooling: number; splashCooling: number }): boolean {
   const t = tileAt(state, target)!;
   const wasBurning = t.fire > 0;
-  t.fire = Math.max(0, t.fire - w.knockdown);
+  // Water does little against burning flammable liquid (it takes foam).
+  const knockdown = CONTENTS[t.contents].accelerant === 'liquid' ? Math.ceil(w.knockdown * ACCELERANT.waterFactor) : w.knockdown;
+  t.fire = Math.max(0, t.fire - knockdown);
   t.temperature = Math.max(20, t.temperature - w.cooling);
   t.wet = SPRAY.wetTurns;
   for (const n of neighbors(state, target)) {

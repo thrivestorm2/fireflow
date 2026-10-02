@@ -1,6 +1,7 @@
 import { AMBIENT } from './materials';
 import { DIRS, forEachClosedDoor, isOpenAir, isOutside, isShaft, posKey, spaceMap } from './grid';
-import { clamp, ventedTiles } from './fire';
+import { ACCELERANT, clamp, ventedTiles } from './fire';
+import { CONTENTS } from './materials';
 import type { Tile } from './types';
 import type { SimSystem } from './systems';
 
@@ -53,7 +54,8 @@ export const smokeSystem: SimSystem = {
         for (let x = 0; x < W; x++) {
           const t = floors[f][y][x];
           if (t.fire > 0) {
-            const made = t.fire * SMOKE.perFireLevel * (vented[f][y][x] ? 1 : SMOKE.ventLimitedFactor);
+            const made =
+              t.fire * SMOKE.perFireLevel * (vented[f][y][x] ? 1 : SMOKE.ventLimitedFactor) * (CONTENTS[t.contents].accelerant ? ACCELERANT.smokeFactor : 1);
             if (isOpenAir(t)) {
               d[f][y][x] += made;
             } else {

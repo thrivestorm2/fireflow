@@ -1,4 +1,5 @@
 import { DIRS, isOpenAir, isOutside, posKey, samePos, tileAt } from './grid';
+import { describe } from './occupants';
 import type { GameState, Log, Pos, Unit } from './types';
 
 export const SEARCH = {
@@ -19,7 +20,7 @@ function reveal(state: GameState, p: Pos, log: Log, truckId?: string): void {
   for (const c of state.units) {
     if (c.kind === 'civilian' && c.status === 'active' && !c.found && !c.carriedBy && samePos(c.pos, p)) {
       c.found = true;
-      log(`Victim found: ${c.name}!`, 'good', truckId);
+      log(`Found ${describe(c)}!`, 'good', truckId);
     }
   }
 }

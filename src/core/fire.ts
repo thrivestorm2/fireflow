@@ -1,7 +1,7 @@
 import { DIRS, forEachClosedDoor, isOpenAir, isOutside, isShaft, spaceMap, type SpaceMap } from './grid';
-import { AMBIENT, ignitionOf } from './materials';
+import { AMBIENT, CONTENTS, ignitionOf } from './materials';
 import type { SimSystem } from './systems';
-import type { Tile } from './types';
+import type { GameState, Log, Tile } from './types';
 
 /**
  * Tuning constants for fire behaviour. Temperatures are in °C; a turn is about
@@ -190,7 +190,10 @@ export const fireSystem: SimSystem = {
 
           if (t.fire === 0) {
             const ignition = ignitionOf(t.material, t.contents);
-            if (t.fuel > 0 && t.wet === 0 && t.temperature >= ignition) {
+            const accelerant = CONTENTS[t.contents].accelerant;
+            if (accelerant && t.wet === 0 && t.temperature >= CONTENTS[t.contents].ignition) {
+              igniteAccelerant(state, { floor: f, x, y }, log); // no chance about it
+            } else if (t.fuel > 0 && t.wet === 0 && t.temperature >= ignition) {
               const p = clamp(FIRE.ignitionBase + (t.temperature - ignition) / FIRE.ignitionScale, 0, 0.9);
               if (rng.chance(p)) t.fire = 1;
             }
@@ -244,6 +247,70 @@ export const fireSystem: SimSystem = {
     }
   },
 };
+
+/**
+ * Accelerants. A flammable liquid (gasoline, solvent) flashes straight to full
+ * intensity and spills, burning, across the floor around it. A pressurised
+ * cylinder (propane) heated past its limit ruptures in a fireball (a BLEVE):
+ * fire and heat out to `blastRadius`, windows blown out, walls and doors
+ * damaged, anyone nearby hurt.
+ */
+export const ACCELERANT = {
+  /** Fuel a burning spill adds to each floor tile it runs onto, and its intensity there. */
+  spillFuel: 4,
+  spillFire: 2,
+  spillHeat: 650,
+  blastRadius: 2,
+  blastHeat: 450,
+  blastFire: 2,
+  blastDamage: 25,
+  /** Health lost by anyone caught in the blast. */
+  blastInjury: 35,
+  /** Burning accelerants make this much more smoke; water knocks burning liquid down this much less. */
+  smokeFactor: 2,
+  waterFactor: 0.5,
+} as const;
+
+function igniteAccelerant(state: GameState, p: { floor: number; x: number; y: number }, log: Log): void {
+  const floor = state.floors[p.floor];
+  const t = floor[p.y][p.x];
+  const kind = CONTENTS[t.contents].accelerant;
+  const where = floorName(p.floor);
+  if (kind === 'liquid') {
+    t.fire = 3;
+    t.fuel = Math.max(t.fuel, ACCELERANT.spillFuel);
+    for (const [dx, dy] of DIRS) {
+      const n = floor[p.y + dy]?.[p.x + dx];
+      if (!n || n.kind !== 'floor' || n.wet > 0) continue;
+      n.fuel += ACCELERANT.spillFuel;
+      n.fire = Math.max(n.fire, ACCELERANT.spillFire);
+      n.temperature = Math.max(n.temperature, ACCELERANT.spillHeat);
+    }
+    log(`${CONTENTS[t.contents].label} ignites on ${where} — burning liquid spreads across the floor!`, 'bad');
+    return;
+  }
+  // Pressurised: a BLEVE.
+  const label = CONTENTS[t.contents].label;
+  t.contents = 'none';
+  t.fire = 3;
+  t.fuel = Math.max(t.fuel, ACCELERANT.spillFuel);
+  const r = ACCELERANT.blastRadius;
+  for (let dy = -r; dy <= r; dy++) {
+    for (let dx = -r; dx <= r; dx++) {
+      const n = floor[p.y + dy]?.[p.x + dx];
+      if (!n) continue;
+      n.temperature = Math.min(FIRE.maxTemp, n.temperature + ACCELERANT.blastHeat);
+      if (n.fuel > 0 && n.fire < ACCELERANT.blastFire) n.fire = ACCELERANT.blastFire;
+      if (n.kind === 'window') Object.assign(n, { open: true, broken: true });
+      if (n.kind === 'wall' || n.kind === 'door' || n.kind === 'roof') n.integrity -= ACCELERANT.blastDamage;
+    }
+  }
+  for (const u of state.units) {
+    if (u.status !== 'active' || u.aboard || u.pos.floor !== p.floor) continue;
+    if (Math.abs(u.pos.x - p.x) <= r && Math.abs(u.pos.y - p.y) <= r) u.hp -= ACCELERANT.blastInjury;
+  }
+  log(`A ${label.toLowerCase()} explodes on ${where}!`, 'bad');
+}
 
 export function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));

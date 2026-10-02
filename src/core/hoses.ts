@@ -1,4 +1,5 @@
 import { posKey, samePos } from './grid';
+import { pumpOperator } from './trucks';
 import type { SimSystem } from './systems';
 import type { GameState, HoseLine, HoseSize, Hydrant, HydrantState, Log, Pos, Truck, Unit } from './types';
 
@@ -76,7 +77,9 @@ export function supplyFor(state: GameState, truck: Truck): Hydrant | undefined {
 
 /**
  * Trucks with hydrant water: a flowing hydrant on one of their own supply lines,
- * or a supply line (either direction) to a truck that has it. Relays chain.
+ * or a supply line (either direction) from an engine that has it and someone on
+ * its pump. Ladder trucks have no pump, so water can't be relayed on from one.
+ * Relays chain.
  */
 export function suppliedTrucks(state: GameState): Set<string> {
   return new Set(supplyHops(state).keys());
@@ -84,8 +87,8 @@ export function suppliedTrucks(state: GameState): Set<string> {
 
 /**
  * Supplied trucks and how many truck-to-truck lines the water crosses to reach
- * them: 0 on a flowing hydrant, 1 relayed from such a truck, and so on. Water
- * in a relay line flows from the truck with fewer hops to the one with more.
+ * them: 0 on a flowing hydrant, 1 pumped on from such an engine, and so on.
+ * Water in a relay line flows from the truck with fewer hops to the one with more.
  */
 export function supplyHops(state: GameState): Map<string, number> {
   const hops = new Map<string, number>();
@@ -94,11 +97,15 @@ export function supplyHops(state: GameState): Map<string, number> {
     if (line) hops.set(line.truckId, 0);
   }
   const links = state.hoses.filter((l) => l.kind === 'supply' && l.toTruck);
+  const pumping = (id: string) => {
+    const t = state.trucks.find((tr) => tr.id === id);
+    return !!t && !!pumpOperator(state, t);
+  };
   for (let n = 0, grew = true; grew; n++) {
     grew = false;
     for (const l of links) {
       for (const [from, to] of [[l.truckId, l.toTruck!], [l.toTruck!, l.truckId]]) {
-        if (hops.get(from) === n && !hops.has(to)) {
+        if (hops.get(from) === n && !hops.has(to) && pumping(from)) {
           hops.set(to, n + 1);
           grew = true;
         }

@@ -4,11 +4,11 @@ import type { GameState, Truck, TruckType } from './types';
 /**
  * Striking another alarm calls in more companies. The trucks dispatched with
  * the call are the 1st alarm. Each further alarm brings `engines` engines and
- * `ladders` ladder trucks from further away: the first arrives `delay` turns
- * after it's struck, the rest one turn apart, and every alarm beyond the 2nd
- * adds another turn.
+ * `ladders` ladder trucks from further away, one turn apart: the first is due
+ * `delay` turns after it's struck, plus `perLevel` more for every alarm beyond
+ * the 2nd, and never before every truck already on its way.
  */
-export const ALARM = { maxLevel: 5, engines: 2, ladders: 1, delay: 4, crew: { engine: 3, ladder: 2 } } as const;
+export const ALARM = { maxLevel: 5, engines: 2, ladders: 1, delay: 4, perLevel: 2, crew: { engine: 3, ladder: 2 } } as const;
 
 /** Surnames for the crews of companies called in by later alarms. */
 const NAMES = [
@@ -29,7 +29,8 @@ export function nextAlarm(state: GameState): { level: number; trucks: { name: st
     Math.max(0, ...state.trucks.filter((t) => t.type === type).map((t) => Number(t.name.match(/\d+/)?.[0] ?? 0)));
   const types: TruckType[] = [...Array<TruckType>(ALARM.engines).fill('engine'), ...Array<TruckType>(ALARM.ladders).fill('ladder')];
   const used: Record<TruckType, number> = { engine: number('engine'), ladder: number('ladder') };
-  const first = state.turn + ALARM.delay + (level - 2);
+  const lastDue = Math.max(state.turn, ...state.trucks.map((t) => t.arrivalTurn));
+  const first = Math.max(state.turn + ALARM.delay + ALARM.perLevel * (level - 2), lastDue + 1);
   const trucks = types.map((type, i) => {
     used[type] += 1;
     return { name: `${type === 'engine' ? 'Engine' : 'Ladder'} ${used[type]}`, type, arrivalTurn: first + i };

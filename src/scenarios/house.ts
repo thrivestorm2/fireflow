@@ -4,8 +4,8 @@ import type { Scenario } from '../core/building';
 export const houseFire: Scenario = {
   name: 'House Fire — Two-Storey House',
   description:
-    'Smoke is showing from a two-storey house. Neighbours say three residents are still inside — nobody knows ' +
-    'where, or where the fire started. The front door is locked. Size it up from the outside: watch where smoke ' +
+    'Smoke is showing from a two-storey house. Neighbours say three residents are still inside, with a dog and a ' +
+    'cat — nobody knows where, or where the fire started. The front door is locked. Size it up from the outside: watch where smoke ' +
     'and fire show at the windows, find the fire and the residents, and put it out.',
   seed: 20261001,
   preburn: 3,
@@ -36,7 +36,7 @@ export const houseFire: Scenario = {
       ],
       contents: [
         '  T       T         T     ',
-        '                          ',
+        '                 P        ',
         '                          ',
         '     ss         ccocc     ',
         '     s  k           k     ',
@@ -44,7 +44,7 @@ export const houseFire: Scenario = {
         '     h     p        c     ',
         '                          ',
         '     hh                   ',
-        '        k           c     ',
+        '        k       g   c     ',
         '     s     p       c      ',
         '                          ',
         '   p   p         p  p     ',
@@ -135,7 +135,12 @@ export const houseFire: Scenario = {
   civilians: [
     { name: 'Maria', pos: { floor: 1, x: 6, y: 4 } },
     { name: 'Theo', pos: { floor: 1, x: 18, y: 9 } },
-    { name: 'Grandpa Joe', pos: { floor: 0, x: 7, y: 9 } },
+    { name: 'Grandpa Joe', pos: { floor: 0, x: 7, y: 9 }, limited: true },
+    { name: 'Biscuit', pos: { floor: 0, x: 9, y: 5 }, kind: 'dog' },
+    { name: 'Mochi', pos: { floor: 1, x: 17, y: 5 }, kind: 'cat' },
+    { name: 'Mrs. Okoye', pos: { floor: 0, x: 3, y: 13 }, kind: 'bystander' },
+    { name: 'Dana', pos: { floor: 0, x: 20, y: 13 }, kind: 'bystander' },
+    { name: 'A delivery driver', pos: { floor: 0, x: 9, y: 14 }, kind: 'bystander' },
   ],
   dispatch: [
     { name: 'Engine 1', type: 'engine', arrivalTurn: 1, crew: ['Alvarez', 'Brooks', 'Chen'] },

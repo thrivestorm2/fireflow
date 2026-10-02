@@ -1,6 +1,6 @@
 import { AMBIENT, CONTENTS, MATERIALS } from './materials';
 import { Rng } from './rng';
-import type { Contents, CrewRole, GameState, Material, Pos, Rank, Tile, TileKind, Truck, TruckType, Unit } from './types';
+import type { Contents, CrewRole, GameState, Material, Occupant, Pos, Rank, Tile, TileKind, Truck, TruckType, Unit } from './types';
 
 /**
  * Plan legend — what each tile is and what it is made of:
@@ -37,6 +37,7 @@ const PLAN: Record<string, { kind: TileKind; material: Material; open?: boolean;
  * Contents legend — what sits on the tile (any other character means nothing):
  *   s sofa   b bed   k table   c cabinets   o stove   h bookshelf
  *   p plant  T tree  H fire hydrant
+ *   g gas can  P propane cylinder  D drum of solvent (accelerants: see CONTENTS)
  */
 const CONTENTS_KEY: Record<string, Contents> = {
   s: 'sofa',
@@ -48,6 +49,9 @@ const CONTENTS_KEY: Record<string, Contents> = {
   p: 'plant',
   T: 'tree',
   H: 'hydrant',
+  g: 'gascan',
+  P: 'propane',
+  D: 'drum',
 };
 
 export function makeTile(kind: TileKind, material: Material, contents: Contents = 'none', extra: Partial<Tile> = {}): Tile {
@@ -109,7 +113,8 @@ export interface Scenario {
   fires: { pos: Pos; intensity: number }[];
   /** Start the fire somewhere likely instead (see ORIGIN_WEIGHT), chosen from the seed. */
   randomOrigin?: boolean;
-  civilians: { name: string; pos: Pos }[];
+  /** Residents (the default), pets and bystanders; `kind` says which. */
+  civilians: { name: string; pos: Pos; kind?: Occupant; limited?: boolean }[];
   /** Trucks responding, with their crews. They arrive over several turns. */
   dispatch: Dispatch[];
   /** Fire turns simulated before the first truck arrives. */
@@ -135,7 +140,7 @@ export const crewRank = (i: number): Rank => (i === 0 ? 'LT' : i === 1 ? 'ENG' :
  * shelves and tables make up much of the rest. The share is split between all
  * the tiles of that kind, so ten bed tiles aren't ten times as likely as one.
  */
-export const ORIGIN_WEIGHT: Partial<Record<Contents, number>> = { stove: 50, sofa: 15, bed: 12, bookshelf: 8, cabinet: 8, table: 7 };
+export const ORIGIN_WEIGHT: Partial<Record<Contents, number>> = { stove: 50, sofa: 15, bed: 12, bookshelf: 8, cabinet: 8, table: 7, gascan: 3, drum: 10 };
 
 /** Picks a likely place for the fire to start, away from where anyone is lying. */
 function pickOrigin(state: GameState, rng: Rng): Pos | undefined {
@@ -168,8 +173,9 @@ export function createFirefighter(
   return { id, name, kind: 'firefighter', role, rank, pos: { ...pos }, hp: 100, maxHp: 100, ap, maxAp: ap, status: 'active', truck, aboard: truck };
 }
 
-export function createCivilian(id: string, name: string, pos: Pos): Unit {
-  return { id, name, kind: 'civilian', pos: { ...pos }, hp: 100, maxHp: 100, ap: 0, maxAp: 0, status: 'active', found: false };
+export function createCivilian(id: string, name: string, pos: Pos, occupant: Occupant = 'resident'): Unit {
+  // Bystanders are out in the street where everyone can see them; residents and pets have to be found.
+  return { id, name, kind: 'civilian', occupant, pos: { ...pos }, hp: 100, maxHp: 100, ap: 0, maxAp: 0, status: 'active', found: occupant === 'bystander' };
 }
 
 export function buildState(scenario: Scenario): GameState {
@@ -198,7 +204,7 @@ export function buildState(scenario: Scenario): GameState {
   const units: Unit[] = scenario.dispatch.flatMap((d, i) =>
     d.crew.map((name, j) => createFirefighter(`ff${++n}`, name, d.type, trucks[i].id, undefined, crewRank(j))),
   );
-  units.push(...scenario.civilians.map((c, i) => createCivilian(`cv${i + 1}`, c.name, c.pos)));
+  units.push(...scenario.civilians.map((c, i) => ({ ...createCivilian(`cv${i + 1}`, c.name, c.pos, c.kind), ...(c.limited ? { limited: true } : {}) })));
 
   const state: GameState = {
     scenarioName: scenario.name,

@@ -5,6 +5,7 @@ import { forEachTile } from './grid';
 import { continueHydrantWork, waterSystem } from './hoses';
 import { spotVictims } from './search';
 import { fanSystem } from './ventilation';
+import { isBystander, isPet, occupantSystem } from './occupants';
 import { Rng } from './rng';
 import { smokeSystem } from './smoke';
 import { structureSystem } from './structure';
@@ -12,7 +13,7 @@ import type { SimContext, SimSystem } from './systems';
 import type { GameState, LogEntry } from './types';
 
 /** Environment systems, run in order at the start of every turn. */
-export const SYSTEMS: SimSystem[] = [fireSystem, smokeSystem, fanSystem, structureSystem, exposureSystem, waterSystem];
+export const SYSTEMS: SimSystem[] = [fireSystem, smokeSystem, fanSystem, occupantSystem, structureSystem, exposureSystem, waterSystem];
 
 function runEnvironment(state: GameState, systems: SimSystem[] = SYSTEMS): void {
   const rng = new Rng(state.rngState);
@@ -69,6 +70,8 @@ export interface Summary {
   inside: number;
   /** Victims still inside that nobody has found yet. */
   missing: number;
+  petsRescued: number;
+  petsLost: number;
   firefightersUp: number;
   firefightersDown: number;
   /** Percentage of combustible/structural tiles still intact (not burnt or collapsed). */
@@ -86,19 +89,25 @@ export function summarize(state: GameState): Summary {
     structural++;
     if (t.burnt || t.kind === 'hole' || t.kind === 'rubble') lost++;
   });
-  const civ = state.units.filter((u) => u.kind === 'civilian');
+  // Residents count toward rescues and losses; pets count separately; bystanders not at all.
+  const civ = state.units.filter((u) => u.kind === 'civilian' && !isPet(u) && !isBystander(u));
+  const pets = state.units.filter(isPet);
+  const petsRescued = pets.filter((u) => u.status === 'rescued').length;
+  const petsLost = pets.filter((u) => u.status === 'dead').length;
   const ff = state.units.filter((u) => u.kind === 'firefighter');
   const rescued = civ.filter((u) => u.status === 'rescued').length;
   const dead = civ.filter((u) => u.status === 'dead').length;
   const firefightersDown = ff.filter((u) => u.status === 'down').length;
   const structureSaved = structural ? Math.round(100 * (1 - lost / structural)) : 100;
-  const score = Math.max(0, rescued * 500 - dead * 300 - firefightersDown * 250 + structureSaved * 10 - state.turn * 10);
+  const score = Math.max(0, rescued * 500 - dead * 300 + petsRescued * 150 - petsLost * 50 - firefightersDown * 250 + structureSaved * 10 - state.turn * 10);
   return {
     burning,
     rescued,
     dead,
     inside: civ.filter((u) => u.status === 'active').length,
     missing: civ.filter((u) => u.status === 'active' && !u.found).length,
+    petsRescued,
+    petsLost,
     firefightersUp: ff.length - firefightersDown,
     firefightersDown,
     structureSaved,
@@ -115,7 +124,7 @@ export function evaluate(state: GameState): void {
     return;
   }
   if (s.burning === 0) {
-    for (const u of state.units) if (u.kind === 'civilian' && u.status === 'active') u.status = 'rescued';
+    for (const u of state.units) if (u.kind === 'civilian' && !isBystander(u) && u.status === 'active') u.status = 'rescued';
     state.status = 'won';
     state.log.push({ turn: state.turn, text: 'Fire under control! All remaining occupants are evacuated.', tone: 'good' });
   }

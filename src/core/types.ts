@@ -44,7 +44,10 @@ export type Contents =
   | 'bookshelf'
   | 'plant'
   | 'tree'
-  | 'hydrant';
+  | 'hydrant'
+  | 'gascan'
+  | 'propane'
+  | 'drum';
 
 export interface Tile {
   kind: TileKind;
@@ -91,6 +94,8 @@ export interface Pos {
 }
 
 export type UnitKind = 'firefighter' | 'civilian';
+/** Who a civilian is: a resident, a bystander outside, or a pet. Each moves by itself (see occupants.ts). */
+export type Occupant = 'resident' | 'bystander' | 'dog' | 'cat';
 export type UnitStatus = 'active' | 'down' | 'rescued' | 'dead';
 /** Engine crews fight fire with hoses; ladder crews search, rescue and raise ladders. */
 export type CrewRole = 'engine' | 'ladder';
@@ -102,6 +107,12 @@ export interface Unit {
   name: string;
   kind: UnitKind;
   role?: CrewRole;
+  /** Civilian: resident (the default), bystander, dog or cat. */
+  occupant?: Occupant;
+  /** Civilian: limited mobility (elderly, disabled): a tile a turn at best, and can't climb out of a window. */
+  limited?: boolean;
+  /** Civilian: collapsed, overcome by smoke and heat. Doesn't move, but can still be carried out alive. */
+  unconscious?: boolean;
   /** Firefighter: position on the crew. */
   rank?: Rank;
   pos: Pos;

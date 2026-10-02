@@ -1,16 +1,17 @@
 import { canSprayFrom, nozzleRange } from '../core/actions';
 import { AMBIENT, ignitionOf } from '../core/materials';
 import { HOSE, hydrantAt, supplyHops } from '../core/hoses';
-import { AERIAL, aerialStation, aerialTipAt, aerialTipError, dischargeTiles, footprint, inletTiles, seatOf, supplyTiles, truckTiles, turntableTiles } from '../core/trucks';
+import { AERIAL, aerialStation, aerialTipAt, aerialTipError, dischargeTiles, footprint, inletTiles, pumpOperator, seatOf, supplyTiles, truckTiles, turntableTiles } from '../core/trucks';
 import type { Fan, GameState, HoseLine, Orientation, Pos, Tile, Truck, Unit } from '../core/types';
 import { fanRunning } from '../core/ventilation';
 import { DIRS, isOutside, posKey } from '../core/grid';
 import { isExterior, knowledge, showing } from '../core/knowledge';
+import { waving } from '../core/occupants';
 
 /** Internal pixel size of a tile; canvases are scaled with CSS. */
 export const TILE = 32;
 
-export type Overlay = 'normal' | 'heat' | 'smoke' | 'structure';
+export type Overlay = 'normal' | 'heat' | 'structure';
 
 /** The part of a floor's grid that is drawn. */
 export interface ViewRect {
@@ -312,7 +313,39 @@ function drawContents(g: CanvasRenderingContext2D, t: Tile, px: number, py: numb
       roundRect(g, px + 7, py + 13, 18, 5, 2, '#b71c1c');
       roundRect(g, px + 12, py + 5, 8, 5, 2, '#ef5350');
       break;
+    case 'gascan': // red jerry can
+      roundRect(g, px + 9, py + 10, 14, 16, 3, '#c62828');
+      roundRect(g, px + 18, py + 6, 4, 6, 1, '#8e1b1b');
+      hazard(g, px + 16, py + 18, 4);
+      break;
+    case 'propane': // white cylinder with a valve collar
+      roundRect(g, px + 10, py + 7, 12, 20, 6, '#eceff1');
+      roundRect(g, px + 12, py + 4, 8, 5, 2, '#90a4ae');
+      hazard(g, px + 16, py + 18, 4);
+      break;
+    case 'drum': // blue 55-gallon drum with a flammable diamond
+      roundRect(g, px + 5, py + 4, S - 10, S - 8, 4, '#1e4f91');
+      g.fillStyle = '#163d70';
+      g.fillRect(px + 5, py + 11, S - 10, 2);
+      g.fillRect(px + 5, py + S - 13, S - 10, 2);
+      hazard(g, px + S / 2, py + S / 2, 6);
+      break;
   }
+}
+
+/** A small red-and-white flammable diamond. */
+function hazard(g: CanvasRenderingContext2D, cx: number, cy: number, r: number): void {
+  g.fillStyle = '#d32f2f';
+  g.beginPath();
+  g.moveTo(cx, cy - r);
+  g.lineTo(cx + r, cy);
+  g.lineTo(cx, cy + r);
+  g.lineTo(cx - r, cy);
+  g.closePath();
+  g.fill();
+  g.strokeStyle = '#ffffff';
+  g.lineWidth = 1;
+  g.stroke();
 }
 
 function drawLadder(g: CanvasRenderingContext2D, px: number, py: number): void {
@@ -363,17 +396,16 @@ function drawOverlay(g: CanvasRenderingContext2D, t: Tile, px: number, py: numbe
   if (overlay === 'heat') {
     g.fillStyle = `rgba(255,${Math.round(220 - heat * 220)},0,${heat * 0.85})`;
     g.fillRect(px, py, S, S);
-  } else if (overlay === 'smoke') {
-    g.fillStyle = `rgba(200,200,210,${t.smoke / 110})`;
-    g.fillRect(px, py, S, S);
   } else if (overlay === 'structure') {
     if (t.kind === 'ground' || t.kind === 'air') return;
     const v = t.integrity / 100;
     g.fillStyle = `rgba(${Math.round(255 * (1 - v))},${Math.round(200 * v)},60,0.55)`;
     g.fillRect(px, py, S, S);
   } else {
-    if (t.smoke > 8) {
-      g.fillStyle = `rgba(60,60,66,${Math.min(0.7, t.smoke / 130)})`;
+    // Smoke: a light grey haze that thickens and darkens toward black as it builds.
+    if (t.smoke > 5) {
+      const shade = Math.round(150 - Math.min(1, t.smoke / 100) * 115);
+      g.fillStyle = `rgba(${shade},${shade},${shade + 6},${Math.min(0.8, 0.12 + t.smoke / 115)})`;
       g.fillRect(px, py, S, S);
     }
     if (t.fire === 0 && t.temperature > 150) {
@@ -468,7 +500,28 @@ function drawUnit(g: CanvasRenderingContext2D, u: Unit, px: number, py: number, 
     const carried = !!u.carriedBy;
     const ox = carried ? 9 : 0;
     const oy = carried ? -8 : 0;
-    g.fillStyle = '#f2f2f2';
+    if (u.occupant === 'dog' || u.occupant === 'cat' || u.occupant === 'bystander') {
+      // Pets and bystanders: a small disc with an emoji, so they read apart from residents (white "!").
+      const r = carried ? 7 : 10;
+      g.fillStyle = u.unconscious ? 'rgba(140,140,140,0.9)' : u.occupant === 'bystander' ? 'rgba(160,180,200,0.85)' : 'rgba(255,230,180,0.9)';
+      g.strokeStyle = '#222';
+      g.beginPath();
+      g.arc(cx + ox, cy + oy, r, 0, Math.PI * 2);
+      g.fill();
+      g.stroke();
+      g.font = `${carried ? 10 : 14}px system-ui, sans-serif`;
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.fillText(u.occupant === 'dog' ? '🐕' : u.occupant === 'cat' ? '🐈' : '🧍', cx + ox, cy + oy + 1);
+      if (u.unconscious) {
+        g.font = `${carried ? 8 : 11}px system-ui, sans-serif`;
+        g.fillText('💤', cx + ox + 8, cy + oy - 8);
+      }
+      g.textBaseline = 'alphabetic';
+      hpBar(g, u, px, py);
+      return;
+    }
+    g.fillStyle = u.unconscious ? '#9e9e9e' : '#f2f2f2';
     g.strokeStyle = '#222';
     g.beginPath();
     g.arc(cx + ox, cy + oy, carried ? 6 : 9, 0, Math.PI * 2);
@@ -478,6 +531,10 @@ function drawUnit(g: CanvasRenderingContext2D, u: Unit, px: number, py: number, 
     g.font = `bold ${carried ? 9 : 12}px system-ui`;
     g.textAlign = 'center';
     g.fillText('!', cx + ox, cy + oy + 4);
+    if (u.unconscious) {
+      g.font = `${carried ? 8 : 11}px system-ui, sans-serif`;
+      g.fillText('💤', cx + ox + 8, cy + oy - 7);
+    }
     hpBar(g, u, px, py);
     return;
   }
@@ -695,6 +752,24 @@ export function drawFloor(g: CanvasRenderingContext2D, state: GameState, floor: 
     }
   }
 
+  // Someone waving from a window for help: a hand out of the window, waving.
+  for (const { window: w } of waving(state)) {
+    if (w.floor !== floor) continue;
+    const out = DIRS.find(([dx, dy]) => {
+      const n = state.floors[w.floor][w.y + dy]?.[w.x + dx];
+      return !!n && isOutside(n);
+    }) ?? [0, -1];
+    const wave = Math.sin(view.time / 150) * 0.5;
+    g.save();
+    g.translate(px(w.x) + S / 2 + out[0] * S * 0.55, py(w.y) + S / 2 + out[1] * S * 0.55);
+    g.rotate(wave);
+    g.font = '18px system-ui, sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText('👋', 0, 0);
+    g.restore();
+  }
+
   // Size-up from the street: smoke and fire showing at the building's windows and doors.
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
@@ -828,7 +903,7 @@ function drawHoses(g: CanvasRenderingContext2D, state: GameState, seen: (p: Pos)
     // Start at the coupling on the truck.
     if (seen(line.tiles[0]) && seen(line.origin)) pts.push(line.origin);
     for (const p of line.tiles) pts.push(seen(p) ? p : null);
-    const flow = line.kind === 'supply' ? supplyFlow(state, line, hops) : truck.water > 0 ? 1 : 0;
+    const flow = line.kind === 'supply' ? supplyFlow(state, line, hops) : truck.water > 0 && pumpOperator(state, truck) ? 1 : 0;
     const charged = flow !== 0;
     g.strokeStyle = HOSE_COLOR[line.size];
     g.lineWidth = HOSE_WIDTH[line.size] + (charged ? 1 : 0);

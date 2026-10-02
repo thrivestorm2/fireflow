@@ -35,6 +35,13 @@ export interface ContentsProps {
   blocks: boolean;
   /** Extra AP to climb over. */
   moveExtra: number;
+  /**
+   * Accelerants. A flammable liquid flashes to full intensity when it ignites
+   * and spills burning across the floor around it. A pressurised cylinder
+   * explodes when heated (a BLEVE). Both burn with thick black smoke, and
+   * water does little against burning liquid.
+   */
+  accelerant?: 'liquid' | 'pressurised';
 }
 
 export const CONTENTS: Record<Contents, ContentsProps> = {
@@ -48,6 +55,9 @@ export const CONTENTS: Record<Contents, ContentsProps> = {
   plant: { label: 'Plant', ignition: 420, fuel: 3, blocks: false, moveExtra: 0 },
   tree: { label: 'Tree', ignition: 500, fuel: 20, blocks: true, moveExtra: 0 },
   hydrant: { label: 'Fire hydrant', ignition: Infinity, fuel: 0, blocks: true, moveExtra: 0 },
+  gascan: { label: 'Gas can (gasoline)', ignition: 230, fuel: 10, blocks: false, moveExtra: 1, accelerant: 'liquid' },
+  propane: { label: 'Propane cylinder', ignition: 300, fuel: 6, blocks: true, moveExtra: 0, accelerant: 'pressurised' },
+  drum: { label: 'Drum of solvent', ignition: 260, fuel: 30, blocks: true, moveExtra: 0, accelerant: 'liquid' },
 };
 
 /** Ignition point of a tile: whichever of its structure or contents catches first. */

@@ -3,7 +3,7 @@ import { performAction } from '../src/core/actions';
 import { buildState } from '../src/core/building';
 import { endTurn, newGame, summarize } from '../src/core/game';
 import { houseFire } from '../src/scenarios/house';
-import { miniScenario, standAt } from './helpers';
+import { miniScenario, onPump, standAt } from './helpers';
 
 describe('game flow', () => {
   it('builds the house scenario with the outside, trucks and hydrants', () => {
@@ -34,12 +34,13 @@ describe('game flow', () => {
 
   it('is won when the last fire is put out', () => {
     let s = buildState(
-      miniScenario([['......', '.#,,#.', '......']], {
-        dispatch: [{ name: 'E', type: 'engine', arrivalTurn: 1, crew: ['A'] }],
+      miniScenario([['......', '.#,,#.', '......', '======', '======']], {
+        dispatch: [{ name: 'E', type: 'engine', arrivalTurn: 1, crew: ['A', 'B'] }],
         fires: [{ pos: { floor: 0, x: 3, y: 1 }, intensity: 2 }],
       }),
     );
-    s = standAt(s, 'ff1', 2, 1);
+    Object.assign(s.trucks[0], { status: 'placed', pos: { floor: 0, x: 0, y: 3 } });
+    s = onPump(standAt(s, 'ff1', 2, 1), 'ff2');
     s.hoses.push({ id: 'line1', truckId: 'truck1', kind: 'attack', size: '1.75', origin: { floor: 0, x: 0, y: 0 }, tiles: [{ floor: 0, x: 2, y: 1 }], holder: 'ff1' });
     s.units[0].line = 'line1';
     const r = performAction(s, { type: 'spray', unitId: 'ff1', target: { floor: 0, x: 3, y: 1 } });

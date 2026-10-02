@@ -58,6 +58,26 @@ export function dischargeTiles(truck: Truck): { side: 0 | 1; pos: Pos }[] {
 }
 
 /**
+ * The firefighter running an engine's pump: standing next to its pump panel
+ * (the midship crosslays, either side), off the truck, hands free. Attack lines
+ * only flow, and the engine only pumps water on to other trucks, while someone
+ * is on the pump. Hydrant pressure fills the engine's own tank without one.
+ */
+export function pumpOperator(state: GameState, truck: Truck): Unit | undefined {
+  if (truck.type !== 'engine' || truck.status !== 'placed') return undefined;
+  const panel = dischargeTiles(truck).map((d) => d.pos);
+  return state.units.find(
+    (u) =>
+      u.kind === 'firefighter' &&
+      u.status === 'active' &&
+      !u.aboard &&
+      !u.line &&
+      !u.carrying &&
+      panel.some((p) => p.floor === u.pos.floor && Math.abs(p.x - u.pos.x) + Math.abs(p.y - u.pos.y) === 1),
+  );
+}
+
+/**
  * The 5″ inlets where a supply line from another truck couples on: one on each
  * long side, the row just behind an engine's crosslays, and halfway along a
  * ladder truck (ahead of the turntable).

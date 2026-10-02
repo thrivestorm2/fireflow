@@ -7,7 +7,7 @@ import { hoseLeft, isSupplied } from '../src/core/hoses';
 import { pathTo } from '../src/core/pathing';
 import { seatOf, seatTiles } from '../src/core/trucks';
 import type { GameState, Pos } from '../src/core/types';
-import { miniScenario, run, standAt } from './helpers';
+import { miniScenario, onPump, run, standAt } from './helpers';
 
 const P = (x: number, y: number, floor = 0): Pos => ({ floor, x, y });
 
@@ -168,7 +168,9 @@ describe('hoses', () => {
     s = fresh(s);
     s = run(s, move('ff1', P(3, 2)), { type: 'toggle', unitId: 'ff1', target: P(3, 3) }, move('ff1', P(3, 3), P(3, 4)));
     s = fresh(s);
-    s = run(s, move('ff1', P(4, 4)), { type: 'spray', unitId: 'ff1', target: P(6, 4) });
+    s = run(s, move('ff1', P(4, 4)));
+    expect(performAction(s, { type: 'spray', unitId: 'ff1', target: P(6, 4) }).error).toMatch(/Nobody is on Engine's pump/);
+    s = run(onPump(s, 'ff3'), { type: 'spray', unitId: 'ff1', target: P(6, 4) });
     expect(s.floors[0][4][6].fire).toBe(1);
     expect(s.trucks[0].water).toBe(19);
     s.trucks[0].water = 0;
@@ -183,7 +185,7 @@ describe('hoses', () => {
     s = run(s, move('ff1', P(3, 2)));
     expect(performAction(s, move('ff1', P(2, 2))).state.units[0].ap).toBe(1);
 
-    s = standAt(fresh(s), 'ff1', 2, 5);
+    s = onPump(standAt(fresh(s), 'ff1', 2, 5), 'ff3');
     tileAt(s, P(6, 5))!.contents = 'none';
     tileAt(s, P(6, 5))!.fire = 3;
     tileAt(s, P(6, 5))!.temperature = 800;
@@ -396,6 +398,7 @@ describe('player actions', () => {
     const before = burning(s);
     for (const a of steps) {
       s = fresh(s);
+      if (a.type === 'spray') s = onPump(s, 'ff3');
       const prev = burning(s);
       s = run(s, a);
       expect(burning(s)).toBeLessThanOrEqual(prev);
@@ -422,8 +425,14 @@ describe('truck-to-truck supply and the aerial', () => {
     Object.assign(s.hydrants[0], { state: 'flowing', lineId: line.id, work: 5 });
     Object.assign(line, { hydrant: P(1, 2), holder: undefined });
     s.units[0].line = undefined;
-    return s;
+    return onPump(s, 'ff2'); // the engine pumps on to the ladder truck
   }
+
+  it('an engine only relays water with someone on its pump', () => {
+    const s = standAt(relay(), 'ff2', 8, 2);
+    expect(isSupplied(s, s.trucks[0])).toBe(true); // hydrant pressure fills its own tank
+    expect(isSupplied(s, s.trucks[1])).toBe(false);
+  });
 
   it('a supply line can couple to another truck’s side inlet, relaying hydrant water', () => {
     let s = parked();

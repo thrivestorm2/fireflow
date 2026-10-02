@@ -105,5 +105,5 @@ export function clickOptions(state: GameState, unit: Unit, target: Pos, raw: Pos
 }
 
 function civilianAt(state: GameState, p: Pos): Unit | undefined {
-  return state.units.find((u) => u.kind === 'civilian' && u.status === 'active' && u.found && !u.carriedBy && samePos(u.pos, p));
+  return state.units.find((u) => u.kind === 'civilian' && u.occupant !== 'bystander' && u.status === 'active' && u.found && !u.carriedBy && samePos(u.pos, p));
 }

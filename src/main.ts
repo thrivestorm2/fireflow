@@ -2,12 +2,13 @@ import { performAction, type Action } from './core/actions';
 import { ALARM, nextAlarm, ordinal } from './core/alarms';
 import { exposureDamage } from './core/exposure';
 import { isKnown, knowledge, showing } from './core/knowledge';
+import { waving } from './core/occupants';
 import { endTurn, newGame, summarize } from './core/game';
 import { conditions, samePos, tileAt } from './core/grid';
 import { CONTENTS, ignitionOf, MATERIALS } from './core/materials';
 import { reachable } from './core/pathing';
 import { HOSE_SIZES, HYDRANT_LABEL, HYDRANT_TOTAL, hoseLeft, hydrantAt, isSupplied, linesThrough, supplyFor } from './core/hoses';
-import { dischargeTiles, inletTiles, placementError, seatOf, supplyTiles, truckTiles, turntableAt } from './core/trucks';
+import { dischargeTiles, inletTiles, placementError, pumpOperator, seatOf, supplyTiles, truckTiles, turntableAt } from './core/trucks';
 import type { GameState, HoseSize, Orientation, Pos, Truck, Unit } from './core/types';
 import { houseFire } from './scenarios/house';
 import { clickOptions, type Option } from './ui/intent';
@@ -18,7 +19,6 @@ const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as 
 const OVERLAYS: { overlay: Overlay; label: string; symbol: string }[] = [
   { overlay: 'normal', label: 'Normal view', symbol: '👁️' },
   { overlay: 'heat', label: 'Thermal camera (H)', symbol: '🌡️' },
-  { overlay: 'smoke', label: 'Smoke (V)', symbol: '🌫️' },
   { overlay: 'structure', label: 'Structure', symbol: '🧱' },
 ];
 
@@ -374,10 +374,11 @@ function renderSummary(): void {
   const rows: [string, string | number][] = [
     ['Fire seen (tiles)', knownFire(state)],
     ['Structure intact', `${s.structureSaved}%`],
-    ['Civilians inside', s.inside],
+    ['Residents inside', s.inside],
     ['  not yet found', s.missing],
-    ['Rescued', s.rescued],
-    ['Lost', s.dead],
+    ['Residents safe', s.rescued],
+    ['Residents lost', s.dead],
+    ['Pets safe · lost', `${s.petsRescued} · ${s.petsLost}`],
     ['Crew down', s.firefightersDown],
   ];
   $('summary').innerHTML = rows.map(([k, v]) => `<span class="k">${k}</span><span class="v">${v}</span>`).join('');
@@ -412,6 +413,8 @@ function crewCard(u: Unit): HTMLButtonElement {
   return b;
 }
 
+const STATUS_LABEL: Record<Truck['status'], string> = { enroute: 'En route', staged: 'Staging', placed: 'Assigned' };
+
 function renderAlarm(): void {
   const btn = $('alarm') as HTMLButtonElement;
   if (state.alarm >= ALARM.maxLevel) {
@@ -424,7 +427,7 @@ function renderAlarm(): void {
   const turns = next.trucks.map((t) => t.arrivalTurn);
   btn.textContent = `🚨 Strike ${ordinal(next.level)} alarm`;
   btn.disabled = state.status !== 'playing';
-  btn.title = `${next.trucks.map((t) => t.name).join(', ')} · due turns ${Math.min(...turns)}–${Math.max(...turns)}`;
+  btn.title = `${next.trucks.map((t) => t.name).join(', ')} · due in ${Math.min(...turns) - state.turn}–${Math.max(...turns) - state.turn} turns`;
 }
 
 function renderDispatch(): void {
@@ -439,7 +442,7 @@ function renderDispatch(): void {
     let status: string;
     if (t.status === 'enroute') {
       const n = t.arrivalTurn - state.turn;
-      status = `en route — arrives turn ${t.arrivalTurn}${n === 1 ? ' (next)' : ''}`;
+      status = n <= 1 ? 'arrives next turn' : `arrives in ${n} turns`;
     } else if (t.status === 'staged') {
       status = placing?.truckId === t.id ? 'click a road tile to park · click here to cancel' : 'click to park';
     } else {
@@ -454,10 +457,13 @@ function renderDispatch(): void {
             : '';
       const tank = t.maxWater ? `💧 ${t.water}/${t.maxWater} · ` : '';
       const aerial = t.type === 'ladder' ? (t.aerialTip ? ' · aerial up' : ' · aerial bedded') : '';
-      status = `${tank}hose ${hoseLeft(state, t)}/${t.hose}${src}${aerial}`;
+      const op = t.type === 'engine' ? pumpOperator(state, t) : undefined;
+      const pump = t.type === 'engine' ? (op ? ` · pump: ${op.name}` : ' · pump unmanned') : '';
+      status = `${tank}hose ${hoseLeft(state, t)}/${t.hose}${src}${pump}${aerial}`;
     }
-    const badge = t.status === 'staged' ? '<span class="at-scene">Staging</span>' : '';
-    head.innerHTML = `<span class="dot ${t.type}"></span><span class="tname">${t.name}</span>${badge}<span class="tstatus">${status}</span>`;
+    // Every truck wears a coloured status badge: en route, staging, or assigned (parked and working).
+    const badge = `<span class="status-badge ${t.status}">${STATUS_LABEL[t.status]}</span>`;
+    head.innerHTML = `<span class="tname">${t.name}</span>${badge}<span class="tstatus">${status}</span>`;
     if (t.status === 'staged') {
       // The whole card toggles parking: click once to pick the truck up, again to put it back.
       if (placing?.truckId === t.id) box.classList.add('placing');
@@ -534,7 +540,7 @@ function renderInspector(): void {
   const ign = ignitionOf(t.material, t.contents);
   const people = state.units
     .filter((u) => u.status === 'active' && !u.aboard && (u.kind === 'firefighter' || u.found) && u.pos.floor === hover!.floor && u.pos.x === hover!.x && u.pos.y === hover!.y)
-    .map((u) => `${u.name} (${u.hp} HP, −${exposureDamage(state, u)}/turn)`);
+    .map((u) => `${u.name}${u.unconscious ? ', unconscious' : ''} (${u.hp} HP, −${exposureDamage(state, u)}/turn)`);
   const extras = [
     t.drivable ? 'drivable' : '',
     t.ladder ? 'ladder' : '',
@@ -632,8 +638,15 @@ function smokeShowing(s: GameState, floor: number): boolean {
 
 function renderNavigator(): void {
   const top = state.floors.length - 1;
+  const wavers = waving(state);
   const hint = (floors: number[]) =>
-    floors.some((f) => knownFire(state, f) > 0) ? '🔥' : floors.some((f) => smokeShowing(state, f)) ? '💨' : '';
+    floors.some((f) => wavers.some((w) => w.window.floor === f))
+      ? '🙋'
+      : floors.some((f) => knownFire(state, f) > 0)
+        ? '🔥'
+        : floors.some((f) => smokeShowing(state, f))
+          ? '💨'
+          : '';
   const range = (from: number, to: number) => Array.from({ length: Math.max(0, to - from) }, (_, i) => from + i);
   ($('floor-up') as HTMLButtonElement).disabled = viewFloor >= top;
   ($('floor-down') as HTMLButtonElement).disabled = viewFloor <= 0;
@@ -733,9 +746,6 @@ window.addEventListener('keydown', (e) => {
       return rotatePlacement();
     case 'h':
       overlay = overlay === 'heat' ? 'normal' : 'heat';
-      return render();
-    case 'v':
-      overlay = overlay === 'smoke' ? 'normal' : 'smoke';
       return render();
     case 'arrowup':
       e.preventDefault();

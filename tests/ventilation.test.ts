@@ -192,7 +192,9 @@ describe('smoke slows the crew', () => {
     let s = standAt(house(), 'ff2', 3, 2);
     s.hoses.push({ id: 'l1', truckId: 'truck2', kind: 'attack', size: '1.75', side: 0, origin: P(0, 0), tiles: [P(3, 2)], holder: 'ff2' });
     s.units[1].line = 'l1';
-    s.trucks[1].status = 'placed';
+    // The engine is notionally parked along the bottom of this tiny lot; ff1 stands in as pump operator.
+    Object.assign(s.trucks[1], { status: 'placed', pos: P(0, 4), orientation: 'h' });
+    s = standAt(s, 'ff1', 2, 3);
     const at = P(3, 2);
     const spray = { type: 'spray', unitId: 'ff2', target: P(4, 2) } as const;
     for (const [smoke, range] of [[0, 3], [40, 3], [70, 2]]) {

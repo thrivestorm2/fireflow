@@ -35,7 +35,7 @@ There is no linter; `tsc` strictness is the check.
   union, `actionCost`, `performAction`, usually an option in `clickOptions` (`ui/intent.ts`) — the UI is tap-only, with no mode or action buttons —
   and the README action table.
 - **Turn loop** (`game.ts`): `endTurn` increments the turn, runs the environment `SYSTEMS` in order
-  (fire → smoke → fans → structure → exposure → water), arrives due trucks, restores AP, spots victims,
+  (fire → smoke → fans → occupants → structure → exposure → water), arrives due trucks, restores AP, spots victims,
   then `evaluate` sets win/loss. Fire only changes during this phase. New hazards are added as a
   `SimSystem` (`systems.ts`) appended to `SYSTEMS`.
 - **Grid model** (`types.ts`): `state.floors[floor][y][x]` of `Tile` (kind, material, contents,

@@ -51,11 +51,21 @@ extra AP to climb over (sofas, beds, tables).
    - **Flashover.** When a burning room's air averages 550 °C and the fire can get air, everything
      that can burn in the room ignites at once. A closed-up room fire typically breaks its window a
      few minutes in, then flashes over soon after.
+   - **Accelerants.** Some contents don't wait their turn. A **gas can** (gasoline, 230 °C) or a
+     **drum of solvent** (260 °C, industrial, a big fuel load) ignites the moment it's hot enough,
+     flashes to full fire and spills burning liquid across the floor around it, so even bare tile
+     burns. A **propane cylinder** heated past 300 °C ruptures in a fireball (a BLEVE): fire and
+     +450 °C out to 2 tiles, windows blown out, walls and doors damaged, and 35 HP off anyone
+     caught in it, crew included. Burning accelerants make twice the smoke, thick and black, and
+     water only knocks burning liquid down half as well (real crews use foam). In the house there's
+     a gas can in the utility room and a BBQ propane cylinder in the back yard. Floor plans mark
+     them `g`, `P` and `D` and show a red flammable diamond.
    - **Smoke.** Fire makes smoke, and so does hot fuel that isn't burning yet (from 250 °C). It fills
      the room of origin within a few turns, pours out through open doorways, and leaks around closed
      doors, which hold it back but don't stop it. It rises up stairwells and holes, and the floor
      above fills first, up to twice as smoky as the floor below. It vents through open windows, roof
      vents and to the outside; a closed-up house barely loses any.
+   - **Occupants.** Residents, pets and bystanders move by themselves (see *People and pets*).
    - **Structure.** Fire eats the integrity of walls, doors and upper-floor tiles. A fire also weakens
      the floor directly above it. At 0 integrity a wall or door becomes rubble, and the tile above it
      loses support. An upper floor becomes a hole: anyone standing on it falls, and burning debris
@@ -72,9 +82,10 @@ Trucks are a limited resource dispatched on a schedule. In the house scenario: E
 Ladder 7 on turn 3, Engine 4 on turn 5. That's the **1st alarm**. Need more? **Strike the next
 alarm** with the 🚨 button at the bottom of *Dispatch & crew* (it always names the next level: 2nd, 3rd… up to
 5th). Each alarm sends 2 more engines and a ladder truck with their crews (LT, ENG, FF). They come
-from further away: the first is due 4 turns after you strike it and the rest a turn apart, and each
-alarm beyond the 2nd adds another turn. Hovering the button shows which companies and when. A truck that has arrived shows **Staging** in the Dispatch
-panel and waits there until you **park** it: click its card to pick it up (click it again to put it
+from further away, a turn apart: the 2nd alarm's first company is due 4 turns after you strike it,
+and each alarm after that takes 2 turns longer. An alarm's companies always arrive after every truck
+already on its way. En-route trucks count down the turns until they arrive. Hovering the button shows which companies and when. Every truck in Dispatch wears a coloured status: **En route** (light green, with the turns until it arrives), **Staging** (yellow) once it has arrived, and **Assigned** (blue) once it is parked. A truck in **Staging**
+waits until you **park** it: tap its card to pick it up (click it again to put it
 back), then pick a road or driveway tile. Its crew can't be used until it's parked. **R** (or right-click) turns it a quarter at a
 time, so the front can face any way. While placing, the arrow and white headlights mark the front (cab)
 and red lights mark the back.
@@ -165,7 +176,27 @@ Hints lead the way from the street:
   there. The fire count only counts fire you've seen. A tap only offers water on fire you can see,
   or on heat a thermal camera shows.
 
-## Smoke and search
+## People and pets
+
+Nobody but your crew takes orders. Everyone else moves by themselves every fire phase:
+
+- **Residents** try to get out by the safest route, opening doors (and unlocking the front door from
+  inside) and climbing out of ground-floor windows, but never through thick smoke. Smoke slows them
+  to a tile a turn and can disorient them so they wander. With no clear way out they do what fire
+  safety advice says: stay in the room, get to a window and **wave for help** 👋. That shows them to
+  your crew from outside, and a **🙋** on the floor arrows points to them. Anyone who gets outside
+  on their own is safe.
+- **Unconscious** 💤: a resident or pet worn down to 40 HP by smoke and heat collapses. They stop
+  moving but can still be carried out alive. Lying on the floor, below the worst of the smoke layer,
+  they take half the smoke and heat damage, but flames hurt as much as ever, and if conditions
+  are bad enough they still die.
+- **Limited mobility** (Grandpa Joe): a tile a turn at best, and no climbing out of windows.
+- **Dogs** 🐕 bolt for a way out but can't open doors. **Cats** 🐈 hide under beds and sofas.
+  Pets are hidden until found, can be carried out, and score separately (rescued +150, lost −50).
+- **Bystanders** 🧍 gather outside: they mill about the yards and sidewalks, keep off the road and
+  driveway, stay back from the walls, and back away from heat. They can get in your way, but they
+  aren't yours to carry and don't count toward the result.
+
 
 - **Victims are hidden** until found. After every action, each firefighter sees up to 3 tiles through
   clear air (smoke below 30%) and finds anyone there. Smoke blocks sight.
@@ -193,14 +224,19 @@ Hints lead the way from the street:
 - **The 5″ supply line** (yellow large-diameter hose, 2 per truck) comes off the yellow coupling at
   the **back** of an engine or ladder truck: stand next to the rear of the truck and tap it. Take it to a hydrant, or to another truck's **inlet**: the small yellow couplings on
   each side, just behind the crosslays on an engine and halfway along a ladder truck. Stand beside
-  one and click it (1 AP). Trucks joined by a supply line share hydrant water either way, so an
-  engine on a hydrant can relay to the ladder truck.
+  one and click it (1 AP). Water flows from the truck nearer the hydrant, so an engine on a
+  hydrant can relay to the ladder truck (with someone on its pump).
 - **Hose is limited** to what each engine carries. The hose follows their exact path, one tile of hose per tile
   walked, through doors, up stairs and up ladders. They can't go further than the hose left on that
   engine. Walking back along the hose takes it back in. The hose can be put down and picked up by
   someone else, or packed back onto the engine. A door with a hose through it can't be closed.
-- **Spraying needs the nozzle of an attack line** whose engine still has enough water. Thick smoke
-  cuts the reach of either size by one tile.
+- **Spraying needs the nozzle of an attack line** whose engine still has enough water, **and someone
+  on that engine's pump**: a firefighter standing next to its pump panel (the midship crosslays,
+  either side), off the truck with hands free — usually the engineer. Without a pump operator the
+  attack lines are dry. Thick smoke cuts the reach of either size by one tile.
+- **Relays need a pump too.** Water only goes on through a truck-to-truck supply line from an
+  engine with someone on its pump. A ladder truck has no pump, so it can't feed anything on. A
+  hydrant's own pressure fills the engine it's hooked to without a pump operator.
 - **Hydrants take crew time.** Walk a supply line next to a hydrant and **tap the hydrant**. Hooking up is 5 AP of work: take the cap off (1), couple the hose (2, using one more
   tile of hose), and open the hydrant (2). The firefighter spends whatever AP they have left on it.
   If the job isn't finished, they carry on automatically at the start of the next turn, unless they
@@ -250,12 +286,12 @@ speed.
 - **Tap a coupling** on a truck to take that hose, or a side inlet to couple the supply line you're
   carrying. **Tap a staging truck** in Dispatch to park it.
 - **End turn** and **Undo** are in the top bar. The view buttons above the floor selector switch
-  between the normal view (👁️), the thermal camera (🌡️), smoke (🌫️) and structure (🧱). Hover (or tap) a tile to inspect it. Dashed orange
+  between the normal view (👁️, which shows smoke as a grey haze that darkens as it thickens), the
+  thermal camera (🌡️) and structure (🧱). Hover (or tap) a tile to inspect it. Dashed orange
   borders mark tiles close to igniting.
 
 Optional keyboard shortcuts: **Tab** next firefighter, **Enter** end turn, **Z** undo, **R** turn a
-truck being parked, **↑** / **↓** change floor, **Home** ground floor, **H** / **V** thermal and
-smoke views, **Esc** close the tap menu or cancel parking.
+truck being parked, **↑** / **↓** change floor, **Home** ground floor, **H** thermal view, **Esc** close the tap menu or cancel parking.
 
 ## Architecture
 
