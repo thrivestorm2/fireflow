@@ -866,16 +866,14 @@ export function drawFloor(g: CanvasRenderingContext2D, state: GameState, floor: 
   }
 
   if (view.placing && view.hover) {
-    const tiles = footprint({ ...view.hover, floor: 0 }, view.placing.orientation, view.placing.truck.type).filter(
-      (p) => p.x >= 0 && p.y >= 0 && p.x < W && p.y < H,
-    );
-    if (tiles.length) {
-      drawTruckShape(g, { ...view.placing.truck, orientation: view.placing.orientation, reversed: view.placing.reversed }, tiles, rect, 0.7, true);
-      g.strokeStyle = view.placing.error ? '#ef5350' : '#66bb6a';
-      g.lineWidth = 3;
-      for (const p of tiles) g.strokeRect(px(p.x) + 2, py(p.y) + 2, S - 4, S - 4);
-      g.lineWidth = 1;
-    }
+    // Draw the whole truck even where it hangs off the map (the canvas clips it), so its
+    // shape, cab and unit name stay where they belong; it shows red because it can't park there.
+    const tiles = footprint({ ...view.hover, floor: 0 }, view.placing.orientation, view.placing.truck.type);
+    drawTruckShape(g, { ...view.placing.truck, orientation: view.placing.orientation, reversed: view.placing.reversed }, tiles, rect, 0.7, true);
+    g.strokeStyle = view.placing.error ? '#ef5350' : '#66bb6a';
+    g.lineWidth = 3;
+    for (const p of tiles) g.strokeRect(px(p.x) + 2, py(p.y) + 2, S - 4, S - 4);
+    g.lineWidth = 1;
   } else if (view.hover) {
     g.strokeStyle = '#ffffff';
     g.lineWidth = 2;

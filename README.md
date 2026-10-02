@@ -86,9 +86,12 @@ from further away, a turn apart: the 2nd alarm's first company is due 4 turns af
 and each alarm after that takes 2 turns longer. An alarm's companies always arrive after every truck
 already on its way. En-route trucks count down the turns until they arrive. Hovering the button shows which companies and when. Every truck in Dispatch wears a coloured status: **En route** (light green, with the turns until it arrives), **Staging** (yellow) once it has arrived, and **Assigned** (blue) once it is parked. A truck in **Staging**
 waits until you **park** it: tap its card to pick it up (click it again to put it
-back), then pick a road or driveway tile. Its crew can't be used until it's parked. **R** (or right-click) turns it a quarter at a
+back), then pick a road or driveway tile. On a touchscreen the first tap shows the truck there:
+drag it into place with your finger, then tap it to park. Its crew can't be used until it's parked.
+**R**, right-click or the **Rotate** button turns it a quarter at a
 time, so the front can face any way. While placing, the arrow and white headlights mark the front (cab)
-and red lights mark the back.
+and red lights mark the back. A truck shown in red can't park there: off the road, on top of
+something, or partly outside what you can see on screen (scroll the map so the whole truck shows).
 
 | Truck | Size | Water tank | Hose | Crew |
 |---|---|---|---|---|

@@ -8,7 +8,7 @@ import { conditions, samePos, tileAt } from './core/grid';
 import { CONTENTS, ignitionOf, MATERIALS } from './core/materials';
 import { reachable } from './core/pathing';
 import { HOSE_SIZES, HYDRANT_LABEL, HYDRANT_TOTAL, hoseLeft, hydrantAt, isSupplied, linesThrough, supplyFor } from './core/hoses';
-import { dischargeTiles, inletTiles, placementError, pumpOperator, seatOf, supplyTiles, truckTiles, turntableAt } from './core/trucks';
+import { dischargeTiles, footprint, inletTiles, placementError, pumpOperator, seatOf, supplyTiles, truckTiles, turntableAt } from './core/trucks';
 import type { GameState, HoseSize, Orientation, Pos, Truck, Unit } from './core/types';
 import { houseFire } from './scenarios/house';
 import { clickOptions, type Option } from './ui/intent';
@@ -35,6 +35,11 @@ let hover: Pos | undefined;
 let hint = { text: '', error: false };
 /** Truck currently being parked, if any. On touch screens `previewAt` is the tile tapped to preview it (a second tap there parks). */
 let placing: { truckId: string; orientation: Orientation; reversed: boolean; preview?: string; previewAt?: Pos } | undefined;
+/**
+ * A touch drag of the parking ghost in progress: `grab` is the tile offset from the
+ * ghost's anchor to where the finger went down, so the truck doesn't jump under the finger.
+ */
+let dragging: { pointerId: number; grab: { dx: number; dy: number }; moved: boolean } | undefined;
 /** 'mouse', 'touch' or 'pen' — the last pointer used on the map. */
 let lastPointer = 'mouse';
 /** Aiming the aerial: the next tap on the map picks where its tip goes. */
@@ -103,7 +108,45 @@ function buildStage(): void {
   });
   canvas.addEventListener('pointerdown', (e) => {
     lastPointer = e.pointerType;
+    // Touching the parking ghost picks it up: drag it into place, or tap it to park.
+    const p = eventPos(e);
+    const at = placing?.previewAt;
+    if (e.pointerType !== 'mouse' && placing && at && p && onGhost(p)) {
+      dragging = { pointerId: e.pointerId, grab: { dx: p.x - at.x, dy: p.y - at.y }, moved: false };
+      canvas.setPointerCapture(e.pointerId);
+    }
   });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!dragging || e.pointerId !== dragging.pointerId || !placing) return;
+    const p = eventPos(e);
+    if (!p) return;
+    const to = { floor: 0, x: p.x - dragging.grab.dx, y: p.y - dragging.grab.dy };
+    const at = placing.previewAt;
+    if (at && at.x === to.x && at.y === to.y) return;
+    dragging.moved = true;
+    placing.previewAt = to;
+    placing.preview = `${to.x},${to.y}`;
+    const truck = truckById(placing.truckId)!;
+    const err = parkError(truck, to, placing.orientation);
+    setHintAndRender(err ?? `Let go, then tap ${truck.name} to park it here.`, !!err);
+  });
+  const endDrag = (e: PointerEvent) => {
+    if (!dragging || e.pointerId !== dragging.pointerId) return;
+    const tapped = !dragging.moved && e.type === 'pointerup';
+    dragging = undefined;
+    if (tapped && placing?.previewAt) parkAt(placing.previewAt);
+  };
+  canvas.addEventListener('pointerup', endDrag);
+  canvas.addEventListener('pointercancel', endDrag);
+  // A touch that starts on the ghost belongs to the ghost: don't scroll the page or fire a click.
+  const claimTouch = (e: TouchEvent) => {
+    const t = e.touches[0];
+    if (!t || !placing?.previewAt) return;
+    const p = eventPos(t);
+    if (dragging || (e.type === 'touchstart' && p && onGhost(p))) e.preventDefault();
+  };
+  canvas.addEventListener('touchstart', claimTouch, { passive: false });
+  canvas.addEventListener('touchmove', claimTouch, { passive: false });
   canvas.addEventListener('click', (e) => {
     const p = eventPos(e);
     if (!p) return;
@@ -140,7 +183,7 @@ function layout(): void {
 }
 
 /** The tile under the mouse, as it is shown on the current floor (the ground, outside the building). */
-function eventPos(e: MouseEvent): Pos | undefined {
+function eventPos(e: { clientX: number; clientY: number }): Pos | undefined {
   const r = canvas.getBoundingClientRect();
   const x = Math.floor(((e.clientX - r.left) / r.width) * state.width);
   const y = Math.floor(((e.clientY - r.top) / r.height) * state.height);
@@ -204,18 +247,15 @@ function onTileClick(p: Pos, frac = { fx: 0.5, fy: 0.5 }, at?: { x: number; y: n
   if (placing) {
     if (p.floor !== 0) return setHintAndRender('Trucks park on the ground floor.', true);
     const truck = truckById(placing.truckId)!;
-    // On touch screens the first tap previews the spot; a second tap on the same tile parks.
+    // On touch screens the first tap previews the spot; then drag the truck, or tap it to park.
     const key = `${p.x},${p.y}`;
     if (lastPointer === 'touch' && placing.preview !== key) {
       placing.preview = key;
       placing.previewAt = { floor: 0, x: p.x, y: p.y };
-      const err = placementError(state, truck, p, placing.orientation);
-      return setHintAndRender(err ?? `Tap again to park ${truck.name} here, or tap Rotate.`, !!err);
+      const err = parkError(truck, p, placing.orientation);
+      return setHintAndRender(err ?? `Drag ${truck.name} into place, then tap it to park. Rotate turns it.`, !!err);
     }
-    if (commit([{ type: 'placeTruck', truckId: truck.id, pos: p, orientation: placing.orientation, reversed: placing.reversed }])) {
-      placing = undefined;
-      setHintAndRender(`${truck.name} parked. Tap a crew member on the truck, then a tile next to it to get them off.`);
-    }
+    parkAt(p);
     return;
   }
 
@@ -336,6 +376,68 @@ function setHintAndRender(text: string, error = false): void {
   render();
 }
 
+/**
+ * Why the truck can't park here: the game's rules (road only, no overlaps…) or,
+ * on this screen, part of it would sit outside what the player can see.
+ */
+function parkError(truck: Truck, pos: Pos, orientation: Orientation): string | null {
+  return placementError(state, truck, pos, orientation) ?? offScreenError(footprint(pos, orientation, truck.type));
+}
+
+/**
+ * The part of the map the player can actually see: the canvas, clipped by any
+ * scrolling container around it, the window, and the phone's bottom bar.
+ */
+function visibleMapRect(): { left: number; top: number; right: number; bottom: number } {
+  const r = canvas.getBoundingClientRect();
+  let box = { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+  const clip = (c: { left: number; top: number; right: number; bottom: number }) => {
+    box = { left: Math.max(box.left, c.left), top: Math.max(box.top, c.top), right: Math.min(box.right, c.right), bottom: Math.min(box.bottom, c.bottom) };
+  };
+  for (let el = canvas.parentElement; el; el = el.parentElement) {
+    const s = getComputedStyle(el);
+    if (s.overflowX !== 'visible' || s.overflowY !== 'visible') clip(el.getBoundingClientRect());
+  }
+  clip({ left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight });
+  const bar = document.querySelector('.mobilebar');
+  if (bar && getComputedStyle(bar).display !== 'none') clip({ left: -Infinity, top: -Infinity, right: Infinity, bottom: bar.getBoundingClientRect().top });
+  return box;
+}
+
+function offScreenError(tiles: Pos[]): string | null {
+  const r = canvas.getBoundingClientRect();
+  if (!r.width || !r.height) return null; // not laid out (e.g. tests): nothing to judge
+  const tw = r.width / state.width;
+  const th = r.height / state.height;
+  const v = visibleMapRect();
+  const slack = 1;
+  const hidden = tiles.some((p) => {
+    const left = r.left + p.x * tw;
+    const top = r.top + p.y * th;
+    return left < v.left - slack || top < v.top - slack || left + tw > v.right + slack || top + th > v.bottom + slack;
+  });
+  return hidden ? 'Part of the truck is off screen. Move it fully into view.' : null;
+}
+
+/** Whether `p` is under the parking ghost. */
+function onGhost(p: Pos): boolean {
+  const at = placing?.previewAt;
+  if (!placing || !at || p.floor !== 0) return false;
+  return footprint(at, placing.orientation, truckById(placing.truckId)!.type).some((q) => q.x === p.x && q.y === p.y);
+}
+
+/** Parks the truck being placed with its top-left tile at `p`, if it fits there and is fully on screen. */
+function parkAt(p: Pos): void {
+  if (!placing) return;
+  const truck = truckById(placing.truckId)!;
+  const err = parkError(truck, p, placing.orientation);
+  if (err) return setHintAndRender(err, true);
+  if (commit([{ type: 'placeTruck', truckId: truck.id, pos: { floor: 0, x: p.x, y: p.y }, orientation: placing.orientation, reversed: placing.reversed }])) {
+    placing = undefined;
+    setHintAndRender(`${truck.name} parked. Tap a crew member on the truck, then a tile next to it to get them off.`);
+  }
+}
+
 function startPlacing(truck: Truck): void {
   viewFloor = 0; // trucks park on the ground
   placing = { truckId: truck.id, orientation: placing?.orientation ?? 'h', reversed: placing?.reversed ?? false };
@@ -352,8 +454,8 @@ function rotatePlacement(): void {
   placing.reversed = next.reversed;
   const truck = truckById(placing.truckId)!;
   // Previewing on a touch screen: say whether it still fits there this way round; the second tap there parks it.
-  const err = placing.previewAt && placementError(state, truck, placing.previewAt, placing.orientation);
-  if (placing.previewAt) setHintAndRender(err ?? `${truck.name} facing ${next.label}. Tap the same spot again to park it.`, !!err);
+  const err = placing.previewAt && parkError(truck, placing.previewAt, placing.orientation);
+  if (placing.previewAt) setHintAndRender(err ?? `${truck.name} facing ${next.label}. Drag it into place, or tap it to park.`, !!err);
   else setHintAndRender(`${truck.name} facing ${next.label}.`);
 }
 
@@ -715,7 +817,7 @@ function drawAll(time: number): void {
     truck: truckById(placing.truckId)!,
     orientation: placing.orientation,
     reversed: placing.reversed,
-    error: ghostAt ? placementError(state, truckById(placing.truckId)!, ghostAt, placing.orientation) : 'no position',
+    error: ghostAt ? parkError(truckById(placing.truckId)!, ghostAt, placing.orientation) : 'no position',
   };
   drawFloor(canvas.getContext('2d')!, state, viewFloor, { selected: sel, hover: ghostAt, stops, overlay, time, placing: placingView });
 }
