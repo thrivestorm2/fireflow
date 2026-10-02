@@ -113,6 +113,11 @@ export interface Scenario {
   fires: { pos: Pos; intensity: number }[];
   /** Start the fire somewhere likely instead (see ORIGIN_WEIGHT), chosen from the seed. */
   randomOrigin?: boolean;
+  /**
+   * Allow furniture that can't be climbed over right inside a window. Off by
+   * default: every window must be usable as a way in. (For future advanced modes.)
+   */
+  blockedWindows?: boolean;
   /** Residents (the default), pets and bystanders; `kind` says which. */
   civilians: { name: string; pos: Pos; kind?: Occupant; limited?: boolean }[];
   /** Trucks responding, with their crews. They arrive over several turns. */
@@ -218,6 +223,7 @@ export function buildState(scenario: Scenario): GameState {
     fans: [],
     nextLineId: 1,
     alarm: 1,
+    water: { used: 0, knocked: 0 },
     turn: 1,
     status: 'playing',
     rngState: scenario.seed,
@@ -236,6 +242,21 @@ export function buildState(scenario: Scenario): GameState {
     const t = floors[pos.floor][pos.y][pos.x];
     t.fire = intensity;
     t.temperature = 200 + intensity * 200;
+  }
+  if (!scenario.blockedWindows) {
+    floors.forEach((rows, f) =>
+      rows.forEach((row, y) =>
+        row.forEach((t, x) => {
+          if (t.kind !== 'window') return;
+          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            const n = rows[y + dy]?.[x + dx];
+            if (n && n.kind === 'floor' && CONTENTS[n.contents].blocks) {
+              throw new Error(`Floor ${f}: ${CONTENTS[n.contents].label} at ${x + dx},${y + dy} blocks the window at ${x},${y}`);
+            }
+          }
+        }),
+      ),
+    );
   }
   if (scenario.randomOrigin) {
     const rng = new Rng(state.rngState);

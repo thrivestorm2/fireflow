@@ -1,4 +1,4 @@
-import { actionCost, canSprayFrom, fanAt, nozzleRange, pathCost, type Action } from '../core/actions';
+import { actionCost, canSprayFrom, COST, fanAt, nozzleRange, pathCost, type Action } from '../core/actions';
 import { isAdjacent, isWalkable, samePos, tileAt } from '../core/grid';
 import { hydrantAt } from '../core/hoses';
 import { isKnown, knowledge } from '../core/knowledge';
@@ -11,6 +11,8 @@ export interface Option {
   label: string;
   actions: Action[];
   cost: number;
+  /** Instead of acting now, switch the UI into a mode (e.g. aiming the aerial: the next tap picks where). */
+  ui?: 'aim-aerial';
 }
 
 export type Choice = { options: Option[] } | { error: string };
@@ -54,6 +56,12 @@ export function clickOptions(state: GameState, unit: Unit, target: Pos, raw: Pos
 
   // On yourself: jobs done where you stand.
   if (samePos(unit.pos, target)) {
+    const station = aerialStation(state, unit);
+    if (station) {
+      if (unit.ap >= COST.aerial) {
+        options.push({ label: station.aerialTip ? 'Swing the aerial…' : 'Raise the aerial…', actions: [], cost: COST.aerial, ui: 'aim-aerial' });
+      } else firstError ??= `Needs ${COST.aerial} AP to work the aerial (${unit.ap} left)`;
+    }
     if (unit.carrying) offer('Put the person down', { type: 'drop', unitId: id });
     const civ = civilianAt(state, target);
     if (civ && !unit.carrying) offer(`Pick up ${civ.name}`, { type: 'pickup', unitId: id, target });

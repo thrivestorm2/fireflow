@@ -33,10 +33,12 @@ let selectedId: string | undefined;
 let overlay: Overlay = 'normal';
 let hover: Pos | undefined;
 let hint = { text: '', error: false };
-/** Truck currently being parked, if any. */
-let placing: { truckId: string; orientation: Orientation; reversed: boolean; preview?: string } | undefined;
+/** Truck currently being parked, if any. On touch screens `previewAt` is the tile tapped to preview it (a second tap there parks). */
+let placing: { truckId: string; orientation: Orientation; reversed: boolean; preview?: string; previewAt?: Pos } | undefined;
 /** 'mouse', 'touch' or 'pen' — the last pointer used on the map. */
 let lastPointer = 'mouse';
+/** Aiming the aerial: the next tap on the map picks where its tip goes. */
+let aimingAerial = false;
 
 /** R turns the truck a quarter clockwise: front facing left → up → right → down. */
 const FACINGS: { orientation: Orientation; reversed: boolean; label: string }[] = [
@@ -206,13 +208,13 @@ function onTileClick(p: Pos, frac = { fx: 0.5, fy: 0.5 }, at?: { x: number; y: n
     const key = `${p.x},${p.y}`;
     if (lastPointer === 'touch' && placing.preview !== key) {
       placing.preview = key;
+      placing.previewAt = { floor: 0, x: p.x, y: p.y };
       const err = placementError(state, truck, p, placing.orientation);
       return setHintAndRender(err ?? `Tap again to park ${truck.name} here, or tap Rotate.`, !!err);
     }
     if (commit([{ type: 'placeTruck', truckId: truck.id, pos: p, orientation: placing.orientation, reversed: placing.reversed }])) {
       placing = undefined;
-      selectedId = state.units.find((u) => u.aboard === truck.id && u.status === 'active')?.id ?? selectedId;
-      setHintAndRender(`${truck.name} parked. Click (or tap) a crew member on the truck, then a tile next to it to get them off.`);
+      setHintAndRender(`${truck.name} parked. Tap a crew member on the truck, then a tile next to it to get them off.`);
     }
     return;
   }
@@ -233,12 +235,14 @@ function onTileClick(p: Pos, frac = { fx: 0.5, fy: 0.5 }, at?: { x: number; y: n
   }
   // Clicking another firefighter selects them.
   if (own && (!sel || own.id !== sel.id)) {
+    aimingAerial = false;
     selectedId = own.id;
     return setHintAndRender(`${own.name} selected. Tap a tile to act, or tap ${own.name} for jobs right here.`);
   }
   // Clicking a crew member seated on a truck selects them.
   const seated = firefighters().find((u) => u.aboard && u.status === 'active' && samePos(seatOf(state, u) ?? NOWHERE, p));
   if (seated) {
+    aimingAerial = false;
     selectedId = seated.id;
     return setHintAndRender(`${seated.name} selected — click a tile next to ${truckById(seated.aboard)?.name} to get off.`);
   }
@@ -248,6 +252,7 @@ function onTileClick(p: Pos, frac = { fx: 0.5, fy: 0.5 }, at?: { x: number; y: n
   if (truck && !toTurntable && (!sel || !sel.aboard || sel.aboard !== truck.id)) {
     const crew = state.units.find((u) => u.aboard === truck.id && u.status === 'active');
     if (crew) {
+      aimingAerial = false;
       selectedId = crew.id;
       return setHintAndRender(`${crew.name} selected — click a tile next to ${truck.name} to get off.`);
     }
@@ -257,10 +262,35 @@ function onTileClick(p: Pos, frac = { fx: 0.5, fy: 0.5 }, at?: { x: number; y: n
     return setHintAndRender(`${sel.name} is still on ${truckById(sel.aboard)?.name}. Park the truck first.`, true);
   }
   // The floor being viewed, open air included (shown as the ground below): somewhere the aerial could go.
-  const choice = clickOptions(state, sel, p, { floor: viewFloor, x: p.x, y: p.y });
+  const raw = { floor: viewFloor, x: p.x, y: p.y };
+  if (aimingAerial) {
+    if (samePos(sel.pos, p)) {
+      aimingAerial = false;
+      return setHintAndRender('Aerial left where it is.');
+    }
+    if (commit([{ type: 'aerial', unitId: sel.id, tip: raw }])) {
+      aimingAerial = false;
+      setHintAndRender('Aerial in place. Tap the tip to climb it, or fire it can reach for the master stream.');
+    }
+    return;
+  }
+  const choice = clickOptions(state, sel, p, raw);
   if ('error' in choice) return setHintAndRender(choice.error, true);
-  if (choice.options.length === 1 || !at) return void commit(choice.options[0].actions);
-  openTapMenu(choice.options, at);
+  // Tapping yourself always asks, so nothing costs AP without saying what it is.
+  const self = samePos(sel.pos, p) && !sel.aboard;
+  if (at && (self || choice.options.length > 1)) return openTapMenu(choice.options, at);
+  pick(choice.options[0]);
+}
+
+function pick(o: Option): void {
+  if (o.ui === 'aim-aerial') {
+    aimingAerial = true;
+    if (viewFloor === 0) viewFloor = 1; // the tip goes on an upper floor or the roof
+    return setHintAndRender(
+      'Aiming the aerial: tap an outlined open-air or roof tile (change floor with ▲ ▼). Tap the firefighter again to cancel.',
+    );
+  }
+  commit(o.actions);
 }
 
 // ---------------------------------------------------------------- tap menu
@@ -279,7 +309,7 @@ function openTapMenu(options: Option[], at: { x: number; y: number }): void {
     b.addEventListener('click', (e) => {
       e.stopPropagation();
       closeTapMenu();
-      commit(o.actions);
+      pick(o);
     });
     menu.append(b);
   }
@@ -320,12 +350,17 @@ function rotatePlacement(): void {
   const next = FACINGS[(i + 1) % FACINGS.length];
   placing.orientation = next.orientation;
   placing.reversed = next.reversed;
-  setHintAndRender(`${truckById(placing.truckId)?.name} facing ${next.label}.`);
+  const truck = truckById(placing.truckId)!;
+  // Previewing on a touch screen: say whether it still fits there this way round; the second tap there parks it.
+  const err = placing.previewAt && placementError(state, truck, placing.previewAt, placing.orientation);
+  if (placing.previewAt) setHintAndRender(err ?? `${truck.name} facing ${next.label}. Tap the same spot again to park it.`, !!err);
+  else setHintAndRender(`${truck.name} facing ${next.label}.`);
 }
 
 function doEndTurn(): void {
   if (state.status !== 'playing') return;
   placing = undefined;
+  aimingAerial = false;
   showBanner('🔥 Fire phase');
   state = endTurn(state);
   history = [];
@@ -379,6 +414,7 @@ function renderSummary(): void {
     ['Residents safe', s.rescued],
     ['Residents lost', s.dead],
     ['Pets safe · lost', `${s.petsRescued} · ${s.petsLost}`],
+    ['Water used', s.waterUsed ? `${s.waterUsed} · ${Math.round(s.waterEfficiency * 100)}% on fire` : 0],
     ['Crew down', s.firefightersDown],
   ];
   $('summary').innerHTML = rows.map(([k, v]) => `<span class="k">${k}</span><span class="v">${v}</span>`).join('');
@@ -609,7 +645,9 @@ function renderModal(): void {
   modal.innerHTML = `
     <div class="box">
       <h2>${state.status === 'won' ? '🚒 Fire under control' : '💀 Building lost'}</h2>
-      <p>Turn ${state.turn} · ${s.rescued} rescued · ${s.dead} lost · ${s.firefightersDown} crew down · ${s.structureSaved}% of the structure saved</p>
+      <table class="breakdown">
+        ${s.breakdown.map(([k, v]) => `<tr><td>${k}</td><td>${v > 0 ? '+' : ''}${v}</td></tr>`).join('')}
+      </table>
       <div class="score">${s.score}</div>
       <button id="again" class="primary">Play again</button>
     </div>`;
@@ -670,13 +708,16 @@ function drawAll(time: number): void {
     }
     stops = reachCache.stops;
   }
+  // The parking ghost follows the pointer; on a touch screen it stays on the tapped preview tile
+  // (tapping Rotate in the sidebar moves the pointer off the map).
+  const ghostAt = placing ? (lastPointer === 'touch' ? placing.previewAt ?? hover : hover ?? placing.previewAt) : hover;
   const placingView = placing && {
     truck: truckById(placing.truckId)!,
     orientation: placing.orientation,
     reversed: placing.reversed,
-    error: hover ? placementError(state, truckById(placing.truckId)!, hover, placing.orientation) : 'no position',
+    error: ghostAt ? placementError(state, truckById(placing.truckId)!, ghostAt, placing.orientation) : 'no position',
   };
-  drawFloor(canvas.getContext('2d')!, state, viewFloor, { selected: sel, hover, stops, overlay, time, placing: placingView });
+  drawFloor(canvas.getContext('2d')!, state, viewFloor, { selected: sel, hover: ghostAt, stops, overlay, time, placing: placingView });
 }
 
 /** Phone-only bar pinned to the bottom: what's happening, who is selected, End turn. */
@@ -757,6 +798,10 @@ window.addEventListener('keydown', (e) => {
       return setFloor(0);
     case 'escape':
       closeTapMenu();
+      if (aimingAerial) {
+        aimingAerial = false;
+        return setHintAndRender('Aerial left where it is.');
+      }
       if (placing) {
         placing = undefined;
         return setHintAndRender('Parking cancelled.');
@@ -778,7 +823,7 @@ interface HotApi {
 hot?.snapshot?.(() => ({ state }));
 const start = (data: unknown) => {
   const saved = (data as { state?: GameState } | undefined)?.state;
-  restart(saved && saved.scenarioName === houseFire.name && saved.fans && saved.units.some((u) => u.rank) && saved.alarm ? saved : undefined);
+  restart(saved && saved.scenarioName === houseFire.name && saved.fans && saved.units.some((u) => u.rank) && saved.alarm && saved.water ? saved : undefined);
   requestAnimationFrame(loop);
 };
 if (hot?.ready) hot.ready(start);

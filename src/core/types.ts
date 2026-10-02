@@ -238,6 +238,8 @@ export interface GameState {
   nextLineId: number;
   /** Alarm level: 1 for the companies sent with the call, +1 for each further alarm struck. */
   alarm: number;
+  /** Water put on the building (units), and how many levels of fire it knocked down: for the efficiency score. */
+  water: { used: number; knocked: number };
   turn: number;
   status: GameStatus;
   /** Seeded RNG state, so a game is fully reproducible from its seed and actions. */

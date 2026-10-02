@@ -280,3 +280,7 @@ button.alarm:hover:not(:disabled) { background: #a82222; }
 }
 .tapmenu button { display: flex; justify-content: space-between; gap: 12px; text-align: left; padding: 8px 10px; }
 .tapmenu .ap { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.breakdown { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 13px; }
+.breakdown td { padding: 2px 4px; }
+.breakdown td:last-child { text-align: right; font-variant-numeric: tabular-nums; }

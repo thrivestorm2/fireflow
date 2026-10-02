@@ -38,7 +38,7 @@ export const houseFire: Scenario = {
         '  T       T         T     ',
         '                 P        ',
         '                          ',
-        '     ss         ccocc     ',
+        '     ss         ccoc      ',
         '     s  k           k     ',
         '                   kk     ',
         '     h     p        c     ',

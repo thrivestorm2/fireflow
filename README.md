@@ -134,8 +134,9 @@ A ladder truck carries an aerial ladder on a **turntable**, the dark deck across
 ahead of the rear coupling. It's the one part of a truck you can stand on (stepping up costs +1 AP),
 from either side. Anyone on the turntable, or at the tip of the raised aerial, works it:
 
-- **Raise or swing it** (2 AP): view an upper floor and tap an
-  open-air or roof tile (outlined) up to 7 tiles from the turntable (diagonals count as one). Whoever is at the
+- **Raise or swing it** (2 AP): tap the firefighter on the turntable (or at the tip) and choose
+  *Raise the aerial…*, then tap an outlined open-air or roof tile on an upper floor (the view jumps
+  up a floor; tap the firefighter again or press Esc to cancel) up to 7 tiles from the turntable (diagonals count as one). Whoever is at the
   tip rides along.
 - **Climb it** (2 AP between the turntable and the tip). It's a route from the street to the roof, or
   to a window beside the tip: open or break the window from the tip and step in. Carrying a victim
@@ -257,7 +258,7 @@ Nobody but your crew takes orders. Everyone else moves by themselves every fire 
 | Put down / pick up hose | 0 / 1 | Pick up the loose end of a line from its tile. |
 | Pack hose | 1 | Next to the line's engine; the whole line goes back on the truck. |
 | Hook up hydrant | up to 5 total | One click; uses your remaining AP and continues next turn — see above. |
-| Spray | 1 | Holding an attack line. Straight, unobstructed line within the hose's reach. Strength and water use depend on the hose size (see above). Leaves the tile wet for 2 turns. |
+| Spray | 1 | Holding an attack line. Straight or exactly diagonal, unobstructed line within the hose's reach (diagonal reach is shorter: 2 tiles for either size). Strength and water use depend on the hose size (see above). Leaves the tile wet for 2 turns. |
 | Door | 1 | Open or close an adjacent door or window. |
 | Carry / Put down | 1 / 0 | Pick up an adjacent civilian (hands must be free of hose). Carrying them to any outside tile rescues them. |
 | Search | 1–2 | Your tile and the 8 around it; 2 AP in thick smoke. |
@@ -267,9 +268,19 @@ Nobody but your crew takes orders. Everyone else moves by themselves every fire 
 | Ladder (ladder crew) | 2 | Standing outside against the building. |
 | Place / remove fan | 2 / 1 | Ladder crew places; anyone beside it removes. |
 
-You **win** when no fire remains. Civilians still inside then walk out. You **lose** if every
-firefighter goes down. Your score counts rescues, losses, how much of the structure you saved, and
-speed.
+You **win** when no fire remains. Residents and pets still inside then walk out. You **lose** if every
+firefighter goes down. The end screen breaks your score down:
+
+| | Points |
+|---|---|
+| Resident safe / lost | +500 / −300 each |
+| Pet safe / lost | +150 / −50 each |
+| Crew member down | −600 each (twice a lost resident) |
+| Structure saved | +10 per % |
+| Water efficiency | up to +400: levels of fire knocked down per unit of water, against the best possible (2 per unit, a 1¾″ line with every drop on fire). Water sprayed where there's no fire, or a big line on a small fire, lowers it. The master stream counts its water even when a hydrant feeds it. |
+| Time | −50 per turn |
+
+The score can't go below 0. Bystanders don't count.
 
 ## Controls
 
@@ -282,7 +293,8 @@ speed.
   through it, step into a burning tile or spray it, break a window, set up a fan, swing the aerial),
   a **tap menu** pops up listing each with its AP cost. Tap one, or tap anywhere else to dismiss it.
 - **Tap the selected firefighter** for jobs right where they stand: search, raise a ground ladder,
-  put the hose down or pack it onto its truck, put a person down.
+  put the hose down or pack it onto its truck, put a person down, or (on a ladder truck's turntable)
+  raise or swing the aerial. This always opens the menu, so nothing is spent without asking.
 - **Tap a coupling** on a truck to take that hose, or a side inlet to couple the supply line you're
   carrying. **Tap a staging truck** in Dispatch to park it.
 - **End turn** and **Undo** are in the top bar. The view buttons above the floor selector switch
@@ -323,6 +335,10 @@ what makes undo trivial. Everything random goes through the seeded RNG in the st
 scenario plus the same actions always produce the same game.
 
 ### Adding a scenario
+
+Every window must be a way in: furniture that can't be climbed over (cabinets, bookshelves,
+stoves, drums…) can't sit right inside one, and `buildState` rejects a scenario that does that
+unless it sets `blockedWindows` (reserved for future advanced modes).
 
 Draw each floor as two layers of strings: a `plan` (kind and material) and an optional `contents`
 overlay, using the legends in `src/core/building.ts`. All floors share one size, and stairs must sit

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { performAction, streamArea, type Action } from '../src/core/actions';
+import { canSprayFrom, performAction, streamArea, type Action } from '../src/core/actions';
 import { buildState } from '../src/core/building';
 import { endTurn } from '../src/core/game';
 import { forEachTile, tileAt } from '../src/core/grid';
@@ -528,5 +528,40 @@ describe('master stream area', () => {
     expect(streamArea(s, P(2, 1)).some((p) => p.x === 3)).toBe(false);
     Object.assign(tileAt(s, P(3, 1))!, { open: true, broken: true });
     expect(streamArea(s, P(2, 1)).some((p) => p.x === 3)).toBe(true);
+  });
+});
+
+describe('spraying diagonally', () => {
+  const open = () =>
+    buildState(miniScenario([['.......', '.......', '.......', '.......', '.......']]));
+  it('reaches along an exact diagonal, a little less far than straight', () => {
+    const s = open();
+    expect(canSprayFrom(s, P(0, 0), P(2, 2), 3)).toBeNull();
+    expect(canSprayFrom(s, P(0, 0), P(3, 3), 3)).toMatch(/Out of range/);
+    expect(canSprayFrom(s, P(0, 0), P(3, 0), 3)).toBeNull();
+    expect(canSprayFrom(s, P(0, 0), P(2, 1), 3)).toMatch(/straight line or along a diagonal/);
+  });
+  it('can’t squeeze between two walls meeting at a corner', () => {
+    const s = buildState(miniScenario([['.#.', '#..', '...']]));
+    expect(canSprayFrom(s, P(0, 0), P(1, 1), 3)).toMatch(/blocked/);
+  });
+});
+
+describe('windows', () => {
+  it('a firefighter can climb in through a window with a bed on the other side', () => {
+    let s = buildState(
+      miniScenario([{ plan: ['.....', '##d##', '#,,,#', '#####'], contents: ['', '', '  b'] }], {
+        dispatch: [{ name: 'E', type: 'engine', arrivalTurn: 1, crew: ['A'] }],
+        fires: [{ pos: P(1, 2), intensity: 1 }],
+      }),
+    );
+    s.floors[0][1][2] = { ...s.floors[0][1][2], kind: 'window', material: 'glass', open: true };
+    s = standAt(s, 'ff1', 2, 0);
+    expect(pathTo(s, s.units[0], P(2, 2))).toEqual([P(2, 1), P(2, 2)]);
+  });
+  it('scenarios can’t put furniture you can’t climb over right inside a window', () => {
+    const plan = { plan: ['.....', '##W##', '#,,,#', '#####'], contents: ['', '', '  h'] };
+    expect(() => buildState(miniScenario([plan]))).toThrow(/blocks the window/);
+    expect(() => buildState(miniScenario([plan], { blockedWindows: true }))).not.toThrow();
   });
 });

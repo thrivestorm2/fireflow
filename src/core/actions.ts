@@ -176,17 +176,32 @@ export function nozzleRange(state: GameState, u: Unit): number {
   return sprayRange(state, u.pos, lineOf(state, u)?.size);
 }
 
+/**
+ * Whether water can reach `target` from `from`: in a straight line or on an
+ * exact diagonal, through open air, within `range` tiles. A diagonal tile is
+ * √2 tiles away, so the reach along a diagonal is shorter, and the stream can't
+ * squeeze between two walls meeting at a corner.
+ */
 export function canSprayFrom(state: GameState, from: Pos, target: Pos, range = sprayRange(state, from)): string | null {
   if (from.floor !== target.floor) return 'Target must be on the same floor';
+  const ax = Math.abs(target.x - from.x);
+  const ay = Math.abs(target.y - from.y);
+  const diagonal = ax !== 0 && ay !== 0;
+  if (diagonal && ax !== ay) return 'Spray in a straight line or along a diagonal';
+  const steps = Math.max(ax, ay);
+  if (steps === 0) return 'Cannot spray your own tile';
+  if ((diagonal ? steps * Math.SQRT2 : steps) > range + 1e-9) return `Out of range (max ${range}${diagonal ? `, ${Math.floor(range / Math.SQRT2)} on a diagonal` : ''})`;
   const dx = Math.sign(target.x - from.x);
   const dy = Math.sign(target.y - from.y);
-  if (dx !== 0 && dy !== 0) return 'Spray only in straight lines';
-  const dist = Math.abs(target.x - from.x) + Math.abs(target.y - from.y);
-  if (dist === 0) return 'Cannot spray your own tile';
-  if (dist > range) return `Out of range (max ${range})`;
-  for (let i = 1; i < dist; i++) {
-    const t = tileAt(state, { floor: from.floor, x: from.x + dx * i, y: from.y + dy * i });
-    if (!t || !isOpenAir(t)) return 'Line of fire is blocked';
+  const open = (x: number, y: number) => {
+    const t = tileAt(state, { floor: from.floor, x, y });
+    return !!t && isOpenAir(t);
+  };
+  for (let i = 1; i <= steps; i++) {
+    const x = from.x + dx * i;
+    const y = from.y + dy * i;
+    if (diagonal && !open(x - dx, y) && !open(x, y - dy)) return 'Line of fire is blocked';
+    if (i < steps && !open(x, y)) return 'Line of fire is blocked';
   }
   return null;
 }
@@ -561,12 +576,14 @@ export function performAction(prev: GameState, action: Action): ActionResult {
     case 'spray': {
       const hose = HOSE_SIZES[line!.size];
       state.trucks.find((t) => t.id === line!.truckId)!.water -= hose.water;
+      state.water.used += hose.water;
       if (applyWater(state, action.target, hose)) log(`${u.name} knocks down a fire.`, 'good');
       break;
     }
     case 'masterStream': {
       const truck = aerialStation(state, u)!;
       if (!isSupplied(state, truck)) truck.water -= AERIAL.water;
+      state.water.used += AERIAL.water; // hydrant-fed or not, it all lands in the building
       let knocked = 0;
       for (const p of streamArea(state, action.target)) if (applyWater(state, p, AERIAL)) knocked++;
       const result = knocked ? ` and knocks down ${knocked === 1 ? 'a fire' : `${knocked} fires`}` : '';
@@ -745,7 +762,9 @@ function applyWater(state: GameState, target: Pos, w: { knockdown: number; cooli
   const wasBurning = t.fire > 0;
   // Water does little against burning flammable liquid (it takes foam).
   const knockdown = CONTENTS[t.contents].accelerant === 'liquid' ? Math.ceil(w.knockdown * ACCELERANT.waterFactor) : w.knockdown;
-  t.fire = Math.max(0, t.fire - knockdown);
+  const after = Math.max(0, t.fire - knockdown);
+  state.water.knocked += t.fire - after;
+  t.fire = after;
   t.temperature = Math.max(20, t.temperature - w.cooling);
   t.wet = SPRAY.wetTurns;
   for (const n of neighbors(state, target)) {

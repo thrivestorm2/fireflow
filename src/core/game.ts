@@ -63,6 +63,26 @@ export function endTurn(prev: GameState, systems: SimSystem[] = SYSTEMS): GameSt
   return state;
 }
 
+/**
+ * Scoring. Water efficiency rewards putting water on fire, not on the building:
+ * levels of fire knocked down per unit of water, against the best possible (a
+ * 1¾″ line knocks a fire down 2 levels per unit when every drop hits fire).
+ */
+const LOST = 300;
+
+export const SCORE = {
+  rescued: 500,
+  lost: LOST,
+  petRescued: 150,
+  petLost: 50,
+  /** A firefighter lost costs twice a lost resident. */
+  crewDown: 2 * LOST,
+  perStructurePercent: 10,
+  perTurn: 50,
+  waterBonus: 400,
+  bestKnockdownPerWater: 2,
+} as const;
+
 export interface Summary {
   burning: number;
   rescued: number;
@@ -72,6 +92,11 @@ export interface Summary {
   missing: number;
   petsRescued: number;
   petsLost: number;
+  /** Water used, and levels of fire knocked down per unit of it, as a share of the best possible (0–1). */
+  waterUsed: number;
+  waterEfficiency: number;
+  /** Where the score came from: label and points, in order. */
+  breakdown: [string, number][];
   firefightersUp: number;
   firefightersDown: number;
   /** Percentage of combustible/structural tiles still intact (not burnt or collapsed). */
@@ -99,7 +124,19 @@ export function summarize(state: GameState): Summary {
   const dead = civ.filter((u) => u.status === 'dead').length;
   const firefightersDown = ff.filter((u) => u.status === 'down').length;
   const structureSaved = structural ? Math.round(100 * (1 - lost / structural)) : 100;
-  const score = Math.max(0, rescued * 500 - dead * 300 + petsRescued * 150 - petsLost * 50 - firefightersDown * 250 + structureSaved * 10 - state.turn * 10);
+  const water = state.water ?? { used: 0, knocked: 0 };
+  const waterEfficiency = water.used ? Math.min(1, water.knocked / (water.used * SCORE.bestKnockdownPerWater)) : 0;
+  const breakdown: [string, number][] = [
+    [`Residents safe (${rescued})`, rescued * SCORE.rescued],
+    [`Residents lost (${dead})`, -dead * SCORE.lost],
+    [`Pets safe (${petsRescued})`, petsRescued * SCORE.petRescued],
+    [`Pets lost (${petsLost})`, -petsLost * SCORE.petLost],
+    [`Crew down (${firefightersDown})`, -firefightersDown * SCORE.crewDown],
+    [`Structure saved (${structureSaved}%)`, structureSaved * SCORE.perStructurePercent],
+    [`Water efficiency (${Math.round(waterEfficiency * 100)}% of ${water.used} units)`, Math.round(waterEfficiency * SCORE.waterBonus)],
+    [`Time (${state.turn} turns)`, -state.turn * SCORE.perTurn],
+  ];
+  const score = Math.max(0, breakdown.reduce((n, [, v]) => n + v, 0));
   return {
     burning,
     rescued,
@@ -108,6 +145,9 @@ export function summarize(state: GameState): Summary {
     missing: civ.filter((u) => u.status === 'active' && !u.found).length,
     petsRescued,
     petsLost,
+    waterUsed: water.used,
+    waterEfficiency,
+    breakdown,
     firefightersUp: ff.length - firefightersDown,
     firefightersDown,
     structureSaved,

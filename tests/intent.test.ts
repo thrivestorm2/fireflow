@@ -50,3 +50,18 @@ describe('tap to act', () => {
     expect(labels(s, 'ff1', P(0, 2))).toMatch(/Cannot stand there/);
   });
 });
+
+describe('on the aerial turntable', () => {
+  it('tapping yourself offers to aim the aerial (a mode, no AP spent yet)', () => {
+    const s = buildState(
+      miniScenario([['..............', '==============', '=============='], ['              ', '              ', '              ']], {
+        dispatch: [{ name: 'L', type: 'ladder', arrivalTurn: 1, crew: ['A'] }],
+        fires: [{ pos: P(0, 0), intensity: 1 }],
+      }),
+    );
+    Object.assign(s.trucks[0], { status: 'placed', pos: P(0, 1) });
+    const at = standAt(s, 'ff1', 5, 1); // the turntable: one row ahead of the rear coupling
+    const c = clickOptions(at, at.units[0], P(5, 1));
+    expect('options' in c && c.options[0]).toMatchObject({ label: 'Raise the aerial…', ui: 'aim-aerial', actions: [] });
+  });
+});
